@@ -1,0 +1,5 @@
+discord.py
+wavelink
+spotipy
+requests
+Pillow
