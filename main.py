@@ -81,6 +81,7 @@ class MusicClient(discord.Client):
         self.auto_recommend = {}
         self.force_stop = {}
         self.show_now_song = {}
+        self.empty_channel_timers = {}
         self.default_volume = 10
         self.spotify = spotipy.Spotify(client_credentials_manager=SpotifyClientCredentials(
             client_id=config["spotify_client_id"],
@@ -108,7 +109,6 @@ class MusicClient(discord.Client):
                 name="/help 查看指令"
             )
         )
-        check_voice_state.start()
         guild = discord.utils.get(self.guilds, id=1287276156994981899)
         voice_channel = discord.utils.get(guild.voice_channels, id=1287276156994981903)
         await voice_channel.connect(cls=wavelink.Player)
@@ -117,44 +117,6 @@ class MusicClient(discord.Client):
 async def lavalink_keep_alive():
     node = wavelink.NodePool.get_node()
     await node.get_stats()
-
-@tasks.loop(seconds=60)
-async def check_voice_state():
-    for guild in client.guilds:
-        if guild.voice_client:
-            vc: wavelink.player = guild.voice_client
-            try:
-                channel = vc.channel
-                if not channel:
-                    print(f"找不到語音頻道，正在斷開連接 (Guild ID: {guild.id})")
-                    await vc.disconnect()
-                    if guild.id in client.queues:
-                        client.queues[guild.id].clear()
-                    await update_presence()
-                    continue
-                if len(channel.members) == 1:
-                    if channel.id == 1287276156994981903:
-                        return
-                    print(f"頻道內只剩機器人，正在斷開連接 (Channel: {channel.name})")
-                    await vc.disconnect()
-                    if guild.id in client.queues:
-                        client.queues[guild.id].clear()
-                    await client.change_presence(
-                        status=discord.Status.dnd,
-                        activity=discord.Activity(
-                        type=discord.ActivityType.streaming,
-                        name="/help 查看指令"
-                        )  
-                    )
-            except Exception as e:
-                print(f"檢查語音狀態時發生錯誤: {e}")
-                try:
-                    await vc.disconnect()
-                    if guild.id in client.queues:
-                        client.queues[guild.id].clear()
-                    await update_presence()
-                except:
-                    pass
 
 class Song:
     def __init__(self, url: str, title: str, duration: int, thumbnail: str, requester: discord.Member, platform: str):
@@ -1417,6 +1379,54 @@ async def nowplaymsg(interaction: discord.Interaction):
         )
         embed.set_footer(text="✅預設開啟")
     await interaction.response.send_message(embed=embed)
+@client.event
+async def on_voice_state_update(member: discord.Member, before: discord.VoiceState, after: discord.VoiceState):
+    if before.channel is None or after.channel == before.channel:
+        return
+    if before.channel and client.user in before.channel.members:
+        channel = before.channel
+        if channel.id == 1287276156994981903:
+            return
+        if len(channel.members) == 1:
+            guild_id = channel.guild.id
+            channel_id = channel.id
+            client.empty_channel_timers[channel_id] = {
+                'start_time': datetime.datetime.now(),
+                'warned': False
+            }
+            await asyncio.sleep(45)
+            if (channel_id in client.empty_channel_timers and 
+                len(channel.members) == 1 and 
+                client.user in channel.members):
+                if not client.empty_channel_timers[channel_id]['warned']:
+                    warn_embed = discord.Embed(
+                        title="⚠️ 即將自動離開",
+                        description=f"頻道內只剩機器人\n將在 15 秒後自動離開",
+                        color=EMBED_COLORS['warning']
+                    )
+                    await send_message_to_last_channel(guild_id, embed=warn_embed)
+                    client.empty_channel_timers[channel_id]['warned'] = True
+                await asyncio.sleep(15)
+                if (channel_id in client.empty_channel_timers and 
+                    len(channel.members) == 1 and 
+                    client.user in channel.members):
+                    vc = channel.guild.voice_client
+                    if vc:
+                        await vc.disconnect()
+                        bye_embed = discord.Embed(
+                        title="👋 掰",
+                        description=f"",
+                        color=EMBED_COLORS['success']
+                        )
+                        await send_message_to_last_channel(guild_id, embed=bye_embed)
+                        if guild_id in client.queues:
+                            client.queues[guild_id].clear()
+                        await update_presence()
+                    if channel_id in client.empty_channel_timers:
+                        del client.empty_channel_timers[channel_id]
+        else:
+            if channel.id in client.empty_channel_timers:
+                del client.empty_channel_timers[channel.id]
 async def process_spotify_album(spotify_client, url: str) -> list[str]:
     try:
         album_id = url.split('album/')[1].split('?')[0]
