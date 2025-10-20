@@ -60,6 +60,7 @@ import colorsys
 import datetime
 from datetime import timedelta
 from discord.ui import View, Button
+import aiohttp
 EMBED_COLORS = {
     'success': discord.Color.green(),
     'error': discord.Color.red(),
@@ -82,6 +83,7 @@ class MusicClient(discord.Client):
         self.force_stop = {}
         self.show_now_song = {}
         self.empty_channel_timers = {}
+        self.last_activity = {}
         self.default_volume = 10
         self.spotify = spotipy.Spotify(client_credentials_manager=SpotifyClientCredentials(
             client_id=config["spotify_client_id"],
@@ -101,7 +103,11 @@ class MusicClient(discord.Client):
             print(f'音樂節點連接失敗：{e}')
     async def on_ready(self):
         print(f'已登入為 {self.user}')
-        print("Done!") # or logging.info
+        print("Done!")
+        client.add_view(RefreshButton())
+        client.add_view(opselect_view())
+        auto_update_status.start()
+        check_inactive_guilds.start()
         await client.change_presence(
             status=discord.Status.dnd,
             activity=discord.Activity(
@@ -113,11 +119,65 @@ class MusicClient(discord.Client):
         voice_channel = discord.utils.get(guild.voice_channels, id=1287276156994981903)
         await voice_channel.connect(cls=wavelink.Player)
 
+@tasks.loop(minutes=30)
+async def check_inactive_guilds():
+    current_time = datetime.datetime.now()
+    inactive_timeout = datetime.timedelta(hours=6)
+    for guild_id in list(client.last_activity.keys()):
+        guild = client.get_guild(guild_id)
+        if guild and guild.voice_client and guild.voice_client.playing:
+            continue
+        last_time = client.last_activity.get(guild_id)
+        if last_time and (current_time - last_time) > inactive_timeout:
+            if guild_id in client.queues:
+                client.queues[guild_id].clear()
+            if guild_id in client.current_songs:
+                del client.current_songs[guild_id]
+            if guild_id in client.loop_mode:
+                client.loop_mode[guild_id] = False
+            if guild_id in client.auto_recommend:
+                client.auto_recommend[guild_id] = False
+            if guild_id in client.force_stop:
+                client.force_stop[guild_id] = False
+            if guild_id in client.show_now_song:
+                client.show_now_song[guild_id] = True
+            if guild_id in client.empty_channel_timers:
+                del client.empty_channel_timers[guild_id]
+            del client.last_activity[guild_id]
+            print(f"已重置閒置伺服器 (ID: {guild_id}) 的狀態")
+
+async def update_activity_time(guild_id: int):
+    client.last_activity[guild_id] = datetime.datetime.now()
+
 @tasks.loop(seconds=300)
 async def lavalink_keep_alive():
     node = wavelink.NodePool.get_node()
     await node.get_stats()
 
+@tasks.loop(hours=1)
+async def auto_update_status():
+    try:
+        for guild in client.guilds:
+                if guild.voice_client and guild.voice_client.playing:
+                    current_song = client.current_songs.get(guild.id)
+                    if current_song:
+                        await client.change_presence(
+                            status=discord.Status.online,
+                            activity=discord.Activity(
+                                type=discord.ActivityType.listening,
+                                name=f"{current_song.title} | /help 查看指令"
+                            )
+                        )
+                        return
+        await client.change_presence(
+            status=discord.Status.dnd,
+            activity=discord.Activity(
+                type=discord.ActivityType.streaming,
+                name="/help 查看指令"
+            )
+        )
+    except Exception as e:
+        print(f"更新狀態時發生錯誤：{e}")
 class Song:
     def __init__(self, url: str, title: str, duration: int, thumbnail: str, requester: discord.Member, platform: str):
         self.url = url
@@ -254,6 +314,7 @@ def create_error_embed(error_message: str) -> discord.Embed:
     return embed
 @client.tree.command(name="play", description="播放音樂")
 async def play(interaction: discord.Interaction, query: str):
+    await update_activity_time(interaction.guild_id)
     guild_id = interaction.guild_id
     client.force_stop[guild_id] = False
     try:
@@ -636,7 +697,7 @@ async def skip(interaction: discord.Interaction):
             inline=False
         )
     await interaction.response.send_message(embed=embed)
-    await vc.stop()  # 停止當前播放，觸發 play_next
+    await vc.stop()
 async def play_next(guild: discord.Guild, vc: wavelink.Player):
     guild_id = guild.id
     if client.force_stop.get(guild_id, False):
@@ -1168,6 +1229,7 @@ async def clear(interaction: discord.Interaction):
     await interaction.response.send_message(embed=embed)
 @client.tree.command(name="playnext", description="將歌曲插入到播放清單的下一個位置")
 async def playnext(interaction: discord.Interaction, query: str):
+    await update_activity_time(interaction.guild_id)
     try:
         await interaction.response.defer()
         if not await check_voice_state_and_respond(interaction):
@@ -1299,29 +1361,72 @@ async def get_dominant_color(url):
         return discord.Color.from_rgb(int(r*255), int(g*255), int(b*255))
     except:
         return discord.Color.green()
+
+class RefreshButton(discord.ui.View):
+    def __init__(self, image_url: str = None):
+        super().__init__(timeout=None)
+        if image_url:
+            self.add_item(discord.ui.Button(label="點我跳轉", url=image_url, style=discord.ButtonStyle.link))
+
+    @discord.ui.button(label="重新取得", style=discord.ButtonStyle.primary, custom_id="refresh_button")
+    async def refresh(self, interaction: discord.Interaction, button: discord.ui.Button):
+        ref_embed = discord.Embed(title="<a:loading:1429472831103832195> 重新取得中...", color=discord.Color.yellow())
+        await interaction.response.edit_message(embed=ref_embed, view=None)
+        start_time = datetime.datetime.now()
+        async with aiohttp.ClientSession() as session:
+            async with session.get("https://api.redbean0721.com/api/img?type=json") as api_response:
+                end_time = datetime.datetime.now()
+                elapsed = (end_time - start_time).total_seconds()
+                if api_response.status == 200:
+                    data = await api_response.json()
+                    image_url = data.get("url")
+                    embed_color = await get_dominant_color(image_url)
+                    embed = discord.Embed(
+                        title="隨機圖",
+                        color=embed_color,
+                        description=f"提示詞: {data.get('tag')}",
+                    )
+
+                    async with session.get(image_url) as image_response:
+                        image_bytes = await image_response.read()
+                        file = discord.File(BytesIO(image_bytes), filename="image.jpg")
+                        embed.set_image(url="attachment://image.jpg")
+                        embed.set_footer(text=f"回應時間: {elapsed:.2f}s")
+                        embed.timestamp = datetime.datetime.now()
+                        view = RefreshButton(image_url=image_url)
+                        await interaction.edit_original_response(embed=embed, view=view, attachments=[file])
+                else:
+                    await interaction.response.edit_message("無法獲取圖片，請稍後再試。")
+
 @client.tree.command(name="隨機圖", description="可以隨機給你一張圖片")
 async def img(interaction: discord.Interaction):
     await interaction.response.defer()
-    api =  requests.get("https://api.redbean0721.com/api/img?type=json")
-    if api.status_code == 200:
-        data = api.json()
-        image_url = data.get("url")
-        embed_color = await get_dominant_color(image_url)
-        embed = discord.Embed(
-            title="隨機圖",
-            color=embed_color,
-            description=f"提示詞: {data.get('tag')}",
-        )
-        response = requests.get(image_url)
-        file = discord.File(BytesIO(response.content), filename="image.jpg")
-        embed.set_image(url="attachment://image.jpg")
-        embed.set_footer(text=f"回應時間: {api.elapsed.total_seconds():.2f}s")
-        embed.timestamp = datetime.datetime.now()
-        view = discord.ui.View()
-        view.add_item(discord.ui.Button(label="點我跳轉", url=image_url, style=discord.ButtonStyle.link))
-        await interaction.followup.send(embed=embed, view=view, file=file)
-    else:
-        await interaction.followup.send("無法獲取圖片，請稍後再試。")
+    start_time = datetime.datetime.now()
+    async with aiohttp.ClientSession() as session:
+        async with session.get("https://api.redbean0721.com/api/img?type=json") as api_response:
+            end_time = datetime.datetime.now()
+            elapsed = (end_time - start_time).total_seconds()
+            if api_response.status == 200:
+                data = await api_response.json()
+                image_url = data.get("url")
+                embed_color = await get_dominant_color(image_url)
+                embed = discord.Embed(
+                    title="隨機圖",
+                    color=embed_color,
+                    description=f"提示詞: {data.get('tag')}",
+                )
+
+                async with session.get(image_url) as image_response:
+                    image_bytes = await image_response.read()
+                    file = discord.File(BytesIO(image_bytes), filename="image.jpg")
+                    embed.set_image(url="attachment://image.jpg")
+                    embed.set_footer(text=f"回應時間: {elapsed:.2f}s")
+                    embed.timestamp = datetime.datetime.now()
+                    view = RefreshButton(image_url=image_url)
+                    await interaction.followup.send(embed=embed, view=view, file=file)
+            else:
+                await interaction.followup.send("無法獲取圖片，請稍後再試。")
+        
 async def process_spotify_playlist(spotify_client, url: str) -> list[str]:
     try:
         playlist_id = url.split('playlist/')[1].split('?')[0]
@@ -1427,6 +1532,118 @@ async def on_voice_state_update(member: discord.Member, before: discord.VoiceSta
         else:
             if channel.id in client.empty_channel_timers:
                 del client.empty_channel_timers[channel.id]
+
+class opselect_view(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+        self.add_item(opselect())
+
+class LavalinkStatusView(discord.ui.View):
+    def __init__(self, embeds: list[discord.Embed]):
+        super().__init__(timeout=60)
+        self.embeds = embeds
+        self.current_page = 0
+        self.update_buttons()
+
+    def update_buttons(self):
+        self.previous.disabled = self.current_page == 0
+        self.next.disabled = self.current_page >= len(self.embeds) - 1
+
+    @discord.ui.button(label="⬅️ 上一頁", style=discord.ButtonStyle.secondary)
+    async def previous(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if self.current_page > 0:
+            self.current_page -= 1
+            self.update_buttons()
+            await interaction.response.edit_message(embed=self.format_embed(), view=self)
+
+    @discord.ui.button(label="➡️ 下一頁", style=discord.ButtonStyle.secondary)
+    async def next(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if self.current_page < len(self.embeds) - 1:
+            self.current_page += 1
+            self.update_buttons()
+            await interaction.response.edit_message(embed=self.format_embed(), view=self)
+
+    def format_embed(self):
+        embed = self.embeds[self.current_page]
+        embed.set_footer(text=f"第 {self.current_page + 1} / {len(self.embeds)} 頁｜總計 {len(self.embeds)} 個伺服器正在播放")
+        return embed
+
+class opselect(discord.ui.Select):
+    def __init__(self):
+        options = [
+            discord.SelectOption(label="Lavalink 播放狀態", value="Lavalink 播放狀態"),
+            discord.SelectOption(label="更新機器人狀態", value="更新機器人狀態")
+        ]
+        super().__init__(placeholder="選擇功能", min_values=1, max_values=1, options=options, custom_id="persistent_view:op_select")
+    async def callback(self, interaction: discord.Interaction):
+        op_select = self.values[0]
+        if op_select == "Lavalink 播放狀態":
+            embeds = []
+            for guild in client.guilds:
+                if guild.voice_client and guild.voice_client.playing:
+                    current_song = client.current_songs.get(guild.id)
+                    queue_length = len(client.queues[guild.id]) if guild.id in client.queues else 0
+                    status_parts = []
+                    if client.loop_mode.get(guild.id, False):
+                        status_parts.append("🔄循環")
+                    if client.auto_recommend.get(guild.id, False):
+                        status_parts.append("✨推薦")
+                    voice_channel = guild.voice_client.channel
+                    member_count = len([m for m in voice_channel.members if not m.bot])
+
+                    embed = discord.Embed(
+                        title="🎵 Lavalink 播放狀態",
+                        description=f"📡 {guild.name}",
+                        color=EMBED_COLORS['info']
+                    )
+                    embed.add_field(name="🎵 播放中", value=current_song.title if current_song else "未知", inline=False)
+                    embed.add_field(name="👥 頻道", value=f"{voice_channel.name} ({member_count}人在線)", inline=True)
+                    embed.add_field(name="📋 佇列", value=f"{queue_length} 首", inline=True)
+                    embed.add_field(name="⚙️ 狀態", value=' | '.join(status_parts) if status_parts else '➡️ 一般播放', inline=False)
+                    embeds.append(embed)
+
+            if not embeds:
+                embed = discord.Embed(
+                    title="🎵 Lavalink 播放狀態",
+                    description="目前沒有伺服器正在播放音樂",
+                    color=EMBED_COLORS['info']
+                )
+                await interaction.response.send_message(embed=embed, ephemeral=True)
+            else:
+                view = LavalinkStatusView(embeds)
+                await interaction.response.send_message(embed=view.format_embed(), view=view, ephemeral=True)
+        if op_select == "更新機器人狀態":
+            for guild in client.guilds:
+                if guild.voice_client and guild.voice_client.playing:
+                    current_song = client.current_songs.get(guild.id)
+                    if current_song:
+                        await client.change_presence(
+                            status=discord.Status.online,
+                            activity=discord.Activity(
+                                type=discord.ActivityType.listening,
+                                name=f"{current_song.title} | /help 查看指令"
+                            )
+                        )
+                        await interaction.response.send_message("✅ 已更新音樂機器人狀態顯示", ephemeral=True)
+                        return
+            await client.change_presence(
+                status=discord.Status.dnd,
+                activity=discord.Activity(
+                    type=discord.ActivityType.streaming,
+                    name="/help 查看指令"
+                )
+            )
+            await interaction.response.send_message("✅ 已更新音樂機器人狀態顯示", ephemeral=True)
+
+@client.tree.command(name="開發者命令", description="開發者命令")
+@app_commands.default_permissions(manage_roles=True)
+async def 開發者命令(interaction: discord.Interaction):
+    if interaction.user.id != int(config["discord_user_id"]):
+        await interaction.response.send_message("❌ 你沒有權限使用此指令", ephemeral=True)
+        return
+    view = opselect_view()
+    await interaction.response.send_message("請選擇功能", view=view, ephemeral=True)
+
 async def process_spotify_album(spotify_client, url: str) -> list[str]:
     try:
         album_id = url.split('album/')[1].split('?')[0]
