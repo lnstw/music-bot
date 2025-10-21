@@ -108,13 +108,7 @@ class MusicClient(discord.Client):
         client.add_view(opselect_view())
         auto_update_status.start()
         check_inactive_guilds.start()
-        await client.change_presence(
-            status=discord.Status.dnd,
-            activity=discord.Activity(
-                type=discord.ActivityType.streaming,
-                name="/help 查看指令"
-            )
-        )
+        await update_presence()
         guild = discord.utils.get(self.guilds, id=1287276156994981899)
         voice_channel = discord.utils.get(guild.voice_channels, id=1287276156994981903)
         await voice_channel.connect(cls=wavelink.Player)
@@ -154,30 +148,6 @@ async def lavalink_keep_alive():
     node = wavelink.NodePool.get_node()
     await node.get_stats()
 
-@tasks.loop(hours=1)
-async def auto_update_status():
-    try:
-        for guild in client.guilds:
-                if guild.voice_client and guild.voice_client.playing:
-                    current_song = client.current_songs.get(guild.id)
-                    if current_song:
-                        await client.change_presence(
-                            status=discord.Status.online,
-                            activity=discord.Activity(
-                                type=discord.ActivityType.listening,
-                                name=f"{current_song.title} | /help 查看指令"
-                            )
-                        )
-                        return
-        await client.change_presence(
-            status=discord.Status.dnd,
-            activity=discord.Activity(
-                type=discord.ActivityType.streaming,
-                name="/help 查看指令"
-            )
-        )
-    except Exception as e:
-        print(f"更新狀態時發生錯誤：{e}")
 class Song:
     def __init__(self, url: str, title: str, duration: int, thumbnail: str, requester: discord.Member, platform: str):
         self.url = url
@@ -502,23 +472,48 @@ async def process_spotify_url(url: str) -> list[str]:
     except Exception as e:
         print(f"Spotify 處理錯誤: {e}")
         return []
-async def update_presence(status: str = None):
-    if status:
-        await client.change_presence(
-            status=discord.Status.dnd,
-            activity=discord.Activity(
-                type=discord.ActivityType.listening,
-                name=f"{status} | /help 查看指令"
-            )
-        )
+    
+def generate_status_list(client: discord.Client) -> list[str]:
+    guild_count = len(client.guilds)
+    user_count = sum(g.member_count or 0 for g in client.guilds)
+    playing_count = sum(
+        1 for guild in client.guilds
+        if guild.voice_client and guild.voice_client.playing
+    )
+    return [
+        f"正在偷窺 {guild_count} 個伺服器",
+        f"正在監視 {user_count} 個人",
+        "使用 /help 查看幫助",
+        f"正在播放音樂於 {playing_count} 個伺服器"
+    ]
+status_index = 0
+@tasks.loop(seconds=10)
+async def auto_update_status():
+    global status_index
+    try:
+        status_list = generate_status_list(client)
+        subtitle = status_list[status_index]
+        status_index = (status_index + 1) % len(status_list)
+        for guild in client.guilds:
+            if guild.voice_client and guild.voice_client.playing:
+                song = client.current_songs.get(guild.id)
+                if song:
+                    await update_presence(current_song=song.title, subtitle=subtitle)
+                    return
+        await update_presence(subtitle=subtitle)
+    except Exception as e:
+        print(f"更新狀態時發生錯誤：{e}")
+async def update_presence(current_song: str = None, subtitle: str = None):
+    if current_song:
+        name = f"{current_song} | {subtitle}"
+        activity_type = discord.ActivityType.listening
     else:
-        await client.change_presence(
-            status=discord.Status.dnd,
-            activity=discord.Activity(
-                type=discord.ActivityType.streaming,
-                name="/help 查看指令"
-            )
-        )
+        name = f"{subtitle}"
+        activity_type = discord.ActivityType.streaming
+
+    activity = discord.Activity(type=activity_type, name=name)
+    await client.change_presence(status=discord.Status.dnd, activity=activity)
+
 async def get_next_recommendation(guild_id: int) -> Optional[Song]:
     try:
         if guild_id in client.current_songs:
@@ -1617,22 +1612,10 @@ class opselect(discord.ui.Select):
                 if guild.voice_client and guild.voice_client.playing:
                     current_song = client.current_songs.get(guild.id)
                     if current_song:
-                        await client.change_presence(
-                            status=discord.Status.online,
-                            activity=discord.Activity(
-                                type=discord.ActivityType.listening,
-                                name=f"{current_song.title} | /help 查看指令"
-                            )
-                        )
+                        await update_presence(current_song.title)
                         await interaction.response.send_message("✅ 已更新音樂機器人狀態顯示", ephemeral=True)
                         return
-            await client.change_presence(
-                status=discord.Status.dnd,
-                activity=discord.Activity(
-                    type=discord.ActivityType.streaming,
-                    name="/help 查看指令"
-                )
-            )
+            await update_presence()
             await interaction.response.send_message("✅ 已更新音樂機器人狀態顯示", ephemeral=True)
 
 @client.tree.command(name="開發者命令", description="開發者命令")
