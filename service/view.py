@@ -5,8 +5,7 @@ import wavelink
 import asyncio
 from collections import deque
 from core import MusicClient, EMBED_COLORS
-from service.embed import create_music_embed, create_error_embed
-from service.play import check_voice_state_and_respond
+from service.embed import create_music_embed, create_error_embed, check_voice_state_and_respond
 
 client = MusicClient()
 

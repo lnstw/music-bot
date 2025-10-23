@@ -3,7 +3,6 @@ from typing import Optional
 import wavelink
 from collections import deque
 from core import MusicClient, EMBED_COLORS, Song
-
 from service.embed import create_now_playing_embed, create_error_embed
 from service.channel import send_message_to_last_channel
 
