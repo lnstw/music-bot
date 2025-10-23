@@ -1,7 +1,0 @@
-discord_user_name=請填入你的discord名稱
-discord_user_id=請填入你的discord_id
-spotify_client_id=請填入你的client_id
-spotify_client_secret=請填入你的client_secret
-node_url=請填入你的lavalink網址
-node_pw=請填入你的lavalink密碼
-discord_bot_token=請填入你的discord token
