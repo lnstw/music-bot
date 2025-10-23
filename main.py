@@ -11,7 +11,7 @@ from discord.ui import View, Button
 import aiohttp
 from core import MusicClient, config, Song, EMBED_COLORS, RefreshButton, opselect_view, config, get_dominant_color
 from service.play import play_next
-from service.embed import create_song_embed, create_error_embed, check_voice_state_and_respond
+from service.embed import create_song_embed, create_error_embed, check_voice_state_and_respond, create_music_embed
 from service.channel import send_message_to_last_channel
 from service.playlist import process_spotify_track, process_spotify_album, process_youtube_playlist, get_platform, process_spotify_playlist, process_playlist
 async def update_activity_time(guild_id: int):
@@ -151,10 +151,29 @@ async def play(interaction: discord.Interaction, query: str):
                             platform=platform
                         )
                         client.queues[guild_id].append(song)
-                        embed = create_song_embed(song, len(client.queues[guild_id]))
-                        await interaction.followup.send(embed=embed)
                         if not vc.playing:
                             await play_next(client=client, guild=interaction.guild, vc=vc)
+
+                        song = client.current_songs.get(guild_id)
+                        embed = create_song_embed(song, len(client.queues[guild_id]))
+                        await interaction.followup.send(embed=embed)
+                        song = client.current_songs.get(guild_id)
+                        embed = create_music_embed(client, song, vc, guild_id)
+                        view = MusicControlView()
+                        message = await interaction.followup.send(embed=embed, view=view)
+                        async def auto_update():
+                            while True:
+                                await asyncio.sleep(20)
+                                if not vc or not vc.playing:
+                                    embed = discord.Embed(
+                                        title="⚠️ 未在播放或播放完成",
+                                        color=EMBED_COLORS['warning']
+                                    )
+                                    await message.edit(embed=embed, view=None)
+                                    break
+                                updated_embed = create_music_embed(client, song, vc, guild_id)
+                                await message.edit(embed=updated_embed, view=view)
+                        asyncio.create_task(auto_update())
                     else:
                         embed = discord.Embed(
                             title="❌ 無法找到歌曲",
@@ -202,6 +221,7 @@ async def on_wavelink_track_end(payload: wavelink.TrackEndEventPayload):
 
 @client.tree.command(name="pause", description="暫停播放")
 async def pause(interaction: discord.Interaction):
+    await interaction.response.defer()
     if not await check_voice_state_and_respond(interaction):
             return
     if not interaction.guild.voice_client:
@@ -210,7 +230,7 @@ async def pause(interaction: discord.Interaction):
             description="機器人不在語音頻道中",
             color=EMBED_COLORS['error']
         )
-        await interaction.response.send_message(embed=embed)
+        await interaction.followup.send(embed=embed)
         return
     vc: wavelink.Player = interaction.guild.voice_client
     if not vc.playing:
@@ -219,7 +239,7 @@ async def pause(interaction: discord.Interaction):
             description="目前沒有播放任何歌曲",
             color=EMBED_COLORS['error']
         )
-        await interaction.response.send_message(embed=embed)
+        await interaction.followup.send(embed=embed)
         return
     try:
         if vc.paused:
@@ -228,7 +248,7 @@ async def pause(interaction: discord.Interaction):
                 description="音樂已經處於暫停狀態",
                 color=EMBED_COLORS['warning']
             )
-            await interaction.response.send_message(embed=embed)
+            await interaction.followup.send(embed=embed)
             return
         await vc.pause(True)
         embed = discord.Embed(
@@ -236,14 +256,15 @@ async def pause(interaction: discord.Interaction):
             description="音樂已暫停播放",
             color=EMBED_COLORS['success']
         )
-        await interaction.response.send_message(embed=embed)
+        await interaction.followup.send(embed=embed)
     except Exception as e:
         print(f"暫停時發生錯誤：{e}")
         embed = create_error_embed(f"暫停時時發生錯誤：{str(e)}")
-        await interaction.response.send_message(embed=embed)
+        await interaction.followup.send(embed=embed)
 
 @client.tree.command(name="resume", description="繼續播放")
 async def resume(interaction: discord.Interaction):
+    await interaction.response.defer()
     if not await check_voice_state_and_respond(interaction):
             return
     if not interaction.guild.voice_client:
@@ -252,7 +273,7 @@ async def resume(interaction: discord.Interaction):
             description="機器人不在語音頻道中",
             color=EMBED_COLORS['error']
         )
-        await interaction.response.send_message(embed=embed)
+        await interaction.followup.send(embed=embed)
         return
     vc: wavelink.Player = interaction.guild.voice_client
     if not vc.playing:
@@ -261,7 +282,7 @@ async def resume(interaction: discord.Interaction):
             description="目前沒有播放任何歌曲",
             color=EMBED_COLORS['error']
         )
-        await interaction.response.send_message(embed=embed)
+        await interaction.followup.send(embed=embed)
         return
     try:
         if not vc.paused:
@@ -270,7 +291,7 @@ async def resume(interaction: discord.Interaction):
                 description="音樂已經在播放中",
                 color=EMBED_COLORS['warning']
             )
-            await interaction.response.send_message(embed=embed)
+            await interaction.followup.send(embed=embed)
             return
         await vc.pause(False)
         embed = discord.Embed(
@@ -278,18 +299,19 @@ async def resume(interaction: discord.Interaction):
             description="音樂已繼續播放",
             color=EMBED_COLORS['success']
         )
-        await interaction.response.send_message(embed=embed)
+        await interaction.followup.send(embed=embed)
     except Exception as e:
         print(f"繼續播放時發生錯誤：{e}")
         embed = create_error_embed(f"繼續播放時發生錯誤：{str(e)}")
-        await interaction.response.send_message(embed=embed)
+        await interaction.followup.send(embed=embed)
 
 @client.tree.command(name="stop", description="停止播放並清空播放清單")
 async def stop(interaction: discord.Interaction):
+    await interaction.response.defer()
     if not await check_voice_state_and_respond(interaction):
             return
     if not interaction.guild.voice_client:
-        await interaction.response.send_message("❌ 沒有歌曲正在播放！")
+        await interaction.followup.send("❌ 沒有歌曲正在播放！")
         return
     vc: wavelink.Player = interaction.guild.voice_client
     guild_id = interaction.guild_id
@@ -315,19 +337,20 @@ async def stop(interaction: discord.Interaction):
     )
     if guild_id in client.auto_recommend and client.auto_recommend[guild_id]:
         embed.set_footer(text="自動推薦功能仍然開啟")
-    await interaction.response.send_message(embed=embed)
+    await interaction.followup.send(embed=embed)
 
 @client.tree.command(name="skip", description="跳過當前歌曲")
 async def skip(interaction: discord.Interaction):
+    await interaction.response.defer()
     if not await check_voice_state_and_respond(interaction):
             return
     if not interaction.guild.voice_client:
-        await interaction.response.send_message("❌ 沒有歌曲正在播放！")
+        await interaction.followup.send("❌ 沒有歌曲正在播放！")
         return
     vc: wavelink.Player = interaction.guild.voice_client
     guild_id = interaction.guild_id
     if not vc.playing:
-        await interaction.response.send_message("❌ 沒有歌曲正在播放！")
+        await interaction.followup.send("❌ 沒有歌曲正在播放！")
         return
     next_song = None
     if client.loop_mode.get(guild_id, False) and client.queues[guild_id]:
@@ -348,32 +371,34 @@ async def skip(interaction: discord.Interaction):
             value=f"[{next_song.title}]({next_song.url})",
             inline=False
         )
-    await interaction.response.send_message(embed=embed)
+    await interaction.followup.send(embed=embed)
     await vc.stop()
 
 @client.tree.command(name="volume", description="調整音量")
 @app_commands.describe(volume="音量大小 (0-150)")
 async def volume(interaction: discord.Interaction, volume: int):
     try:
+        await interaction.response.defer()
         if not await check_voice_state_and_respond(interaction):
             return
         if not interaction.guild.voice_client:
-            await interaction.response.send_message("❌ 機器人不在語音頻道中！")
+            await interaction.followup.send("❌ 機器人不在語音頻道中！")
             return
         if not 0 <= volume <= 150:
-            await interaction.response.send_message("❌ 音量必須在 0-150 之間！")
+            await interaction.followup.send("❌ 音量必須在 0-150 之間！")
             return
         client.default_volume = volume  # 更新全局音量
         vc: wavelink.Player = interaction.guild.voice_client
         await vc.set_volume(volume)  # 設定當前播放器的音量
-        await interaction.response.send_message(f"🔊 音量已設定為 {volume}%")
+        await interaction.followup.send(f"🔊 音量已設定為 {volume}%")
     except Exception as e:
         print(f"調整音量時發生錯誤：{str(e)}")
         error_embed = create_error_embed(f"調整音量時發生錯誤：{str(e)}")
-        await interaction.response.send_message(embed=error_embed)
+        await interaction.followup.send(embed=error_embed)
 
 @client.tree.command(name="loop", description="切換循環播放模式")
 async def loop(interaction: discord.Interaction):
+    await interaction.response.defer()
     if not await check_voice_state_and_respond(interaction):
             return
     guild_id = interaction.guild_id
@@ -398,15 +423,16 @@ async def loop(interaction: discord.Interaction):
             value=f"目前共有 {total_songs} 首歌曲在循環播放中",
             inline=False
         )
-    await interaction.response.send_message(embed=embed)
+    await interaction.followup.send(embed=embed)
 
 @client.tree.command(name="shuffle", description="隨機播放清單")
 async def shuffle(interaction: discord.Interaction):
+    await interaction.response.defer()
     if not await check_voice_state_and_respond(interaction):
             return
     guild_id = interaction.guild_id
     if guild_id not in client.queues or not client.queues[guild_id]:
-        await interaction.response.send_message("❌ 播放清單是空的！")
+        await interaction.followup.send("❌ 播放清單是空的！")
         return
     if client.loop_mode.get(guild_id, False):
         current_song = client.current_songs.get(guild_id)
@@ -428,7 +454,7 @@ async def shuffle(interaction: discord.Interaction):
     )
     if client.loop_mode.get(guild_id, False):
         embed.set_footer(text="🔄 循環模式開啟中")
-    await interaction.response.send_message(embed=embed)
+    await interaction.followup.send(embed=embed)
 
 class QueuePaginator(View):
     def __init__(self, interaction, queue_list, songs_per_page=10, current_song=None, status_parts=None):
@@ -572,13 +598,14 @@ async def help(interaction: discord.Interaction):
 
 @client.tree.command(name="leave", description="讓機器人離開語音頻道")
 async def leave(interaction: discord.Interaction):
+    await interaction.response.defer()
     if not interaction.user.guild_permissions.move_members:
         if not await check_voice_state_and_respond(interaction):
             return
     else:
         pass
     if not interaction.guild.voice_client:
-        await interaction.response.send_message("❌ 機器人不在語音頻道中！")
+        await interaction.followup.send("❌ 機器人不在語音頻道中！")
         return
     vc: wavelink.Player = interaction.guild.voice_client
     await vc.disconnect()
@@ -587,7 +614,7 @@ async def leave(interaction: discord.Interaction):
         client.queues[guild_id].clear()
     if guild_id in client.current_songs:
         del client.current_songs[guild_id]
-    await interaction.response.send_message("👋 已離開語音頻道")
+    await interaction.followup.send("👋 已離開語音頻道")
     await client.update_presence()
 
 @client.tree.command(name="np", description="顯示當前播放的歌曲")
@@ -744,6 +771,7 @@ async def reload(interaction: discord.Interaction):
 
 @client.tree.command(name="autorecommend", description="開啟/關閉自動推薦功能")
 async def autorecommend(interaction: discord.Interaction):
+    await interaction.response.defer()
     if not await check_voice_state_and_respond(interaction):
             return
     guild_id = interaction.guild_id
@@ -757,25 +785,26 @@ async def autorecommend(interaction: discord.Interaction):
         color=EMBED_COLORS['success']
     )
     embed.set_footer(text="當播放清單為空時，將自動添加相似歌曲")
-    await interaction.response.send_message(embed=embed)
+    await interaction.followup.send(embed=embed)
 
 @client.tree.command(name="remove", description="從播放清單中移除指定歌曲")
 @app_commands.describe(position="要移除的歌曲位置")
 async def remove(interaction: discord.Interaction, position: int):
+    await interaction.response.defer()
     if not await check_voice_state_and_respond(interaction):
             return
     guild_id = interaction.guild_id
     if guild_id not in client.queues or not client.queues[guild_id]:
-        await interaction.response.send_message("❌ 播放清單是空的！")
+        await interaction.followup.send("❌ 播放清單是空的！")
         return
     queue_list = list(client.queues[guild_id])
     if position < 1 or position > len(queue_list):
-        await interaction.response.send_message("❌ 無效的歌曲位置！")
+        await interaction.followup.send("❌ 無效的歌曲位置！")
         return
     if client.loop_mode.get(guild_id, False):
         current_song = client.current_songs.get(guild_id)
         if current_song == queue_list[position-1]:
-            await interaction.response.send_message("❌ 無法移除當前播放的歌曲！")
+            await interaction.followup.send("❌ 無法移除當前播放的歌曲！")
             return
     removed_song = queue_list.pop(position-1)
     client.queues[guild_id] = deque(queue_list)
@@ -786,20 +815,21 @@ async def remove(interaction: discord.Interaction, position: int):
     )
     if client.loop_mode.get(guild_id, False):
         embed.set_footer(text="🔄 循環模式開啟中")
-    await interaction.response.send_message(embed=embed)
+    await interaction.followup.send(embed=embed)
 
 @client.tree.command(name="clear", description="清空播放清單")
 async def clear(interaction: discord.Interaction):
+    await interaction.response.defer()
     if not await check_voice_state_and_respond(interaction):
             return
     guild_id = interaction.guild_id
     if not interaction.guild.voice_client:
-        await interaction.response.send_message("❌ 機器人不在語音頻道中！")
+        await interaction.followup.send("❌ 機器人不在語音頻道中！")
         return
     if guild_id not in client.queues:
         client.queues[guild_id] = deque()
     if not client.queues[guild_id]:
-        await interaction.response.send_message("❌ 播放清單已經是空的！")
+        await interaction.followup.send("❌ 播放清單已經是空的！")
         return
     if client.loop_mode.get(guild_id, False) and guild_id in client.current_songs:
         current_song = client.current_songs[guild_id]
@@ -822,7 +852,7 @@ async def clear(interaction: discord.Interaction):
             description="已清空所有歌曲並關閉循環模式",
             color=EMBED_COLORS['success']
         )
-    await interaction.response.send_message(embed=embed)
+    await interaction.followup.send(embed=embed)
 
 @client.tree.command(name="playnext", description="將歌曲插入到播放清單的下一個位置")
 async def playnext(interaction: discord.Interaction, query: str):
@@ -971,7 +1001,7 @@ async def img(interaction: discord.Interaction):
 async def nowplaymsg(interaction: discord.Interaction):
     guild_id = interaction.guild_id
     if guild_id not in client.show_now_song:
-        client.show_now_song[guild_id] = True
+        client.show_now_song[guild_id] = False
     client.show_now_song[guild_id] = not client.show_now_song[guild_id]
     status = "開啟" if client.show_now_song[guild_id] else "關閉"
     if client.show_now_song[guild_id]:
@@ -1059,5 +1089,344 @@ async def 開發者命令(interaction: discord.Interaction):
         return
     view = opselect_view()
     await interaction.response.send_message("請選擇功能", view=view, ephemeral=True)
+
+class MusicControlView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+        self.play_button = Button(label="⏯️", style=discord.ButtonStyle.primary)
+        self.next_button = Button(label="⏭️", style=discord.ButtonStyle.primary)
+        self.loop_button = Button(label="🔁", style=discord.ButtonStyle.primary)
+        self.queue_button = Button(label="📃", style=discord.ButtonStyle.primary)
+        self.shuffle_button = Button(label="🔀", style=discord.ButtonStyle.primary)
+        self.Rewind_button = Button(label="⏪", style=discord.ButtonStyle.primary)
+        self.forward_button = Button(label="⏩", style=discord.ButtonStyle.primary)
+        self.sound_plus_button = Button(label="🔉➕", style=discord.ButtonStyle.primary)
+        self.sound_minus_button = Button(label="🔉➖", style=discord.ButtonStyle.primary)
+        self.update_button = Button(label="更新", style=discord.ButtonStyle.primary)
+
+        self.next_button.callback = self.next_play
+        self.play_button.callback = self.play_pause
+        self.loop_button.callback = self.toggle_loop
+        self.queue_button.callback = self.show_queue
+        self.shuffle_button.callback = self.shuffle_queue
+        self.Rewind_button.callback = self.Rewind
+        self.forward_button.callback = self.forward
+        self.sound_plus_button.callback = self.increase_volume
+        self.sound_minus_button.callback = self.decrease_volume
+        self.update_button.callback = self.update_status
+
+        self.add_item(self.play_button)
+        self.add_item(self.next_button)
+        self.add_item(self.loop_button)
+        self.add_item(self.queue_button)
+        self.add_item(self.shuffle_button)
+        self.add_item(self.Rewind_button)
+        self.add_item(self.forward_button)
+        self.add_item(self.sound_plus_button)
+        self.add_item(self.sound_minus_button)
+        self.add_item(self.update_button)
+
+    async def next_play(self, interaction: discord.Interaction):
+        await interaction.response.defer()
+        if not await check_voice_state_and_respond(interaction):
+            return
+        if not interaction.guild.voice_client:
+            await interaction.edit_original_response(content="❌ 沒有歌曲正在播放！", embed=None, view=None)
+            return
+        vc: wavelink.Player = interaction.guild.voice_client
+        guild_id = interaction.guild_id
+        if not vc.playing:
+            await interaction.edit_original_response(content="❌ 沒有歌曲正在播放！", embed=None, view=None)
+            return
+        next_song = None
+        if client.loop_mode.get(guild_id, False) and client.queues[guild_id]:
+            current_song = client.current_songs[guild_id]
+            queue_list = list(client.queues[guild_id])
+            current_index = queue_list.index(current_song)
+            next_index = (current_index + 1) % len(queue_list)
+            next_song = queue_list[next_index]
+        elif client.queues[guild_id]:
+            next_song = client.queues[guild_id][0]
+        embed = discord.Embed(
+            title="⏭️ 已跳過當前歌曲",
+            color=EMBED_COLORS['success']
+        )
+        if next_song:
+            embed.add_field(
+                name="即將播放",
+                value=f"[{next_song.title}]({next_song.url})",
+                inline=False
+            )
+        await interaction.followup.send(embed=embed, ephemeral=True)
+        await vc.stop()
+
+    async def play_pause(self, interaction: discord.Interaction):
+        await interaction.response.defer()
+        if not await check_voice_state_and_respond(interaction):
+            return
+        if not interaction.guild.voice_client:
+            await interaction.edit_original_response(content="❌ 沒有歌曲正在播放！", embed=None, view=None)
+            return
+        vc: wavelink.Player = interaction.guild.voice_client
+        if vc.paused:
+            await vc.pause(False)
+            embed = discord.Embed(
+                title="▶️ 已恢復播放",
+                color=EMBED_COLORS['success']
+            )
+        elif vc.playing:
+            await vc.pause(True)
+            embed = discord.Embed(
+                title="⏸️ 已暫停播放",
+                color=EMBED_COLORS['success']
+            )
+        else:
+            embed = discord.Embed(
+                title="❌ 沒有歌曲正在播放！",
+                color=EMBED_COLORS['error']
+            )
+        await interaction.followup.send(embed=embed, ephemeral=True)
+    
+    async def toggle_loop(self, interaction: discord.Interaction):
+        await interaction.response.defer()
+        if not await check_voice_state_and_respond(interaction):
+            return
+        guild_id = interaction.guild_id
+        if guild_id not in client.loop_mode:
+            client.loop_mode[guild_id] = False
+        client.loop_mode[guild_id] = not client.loop_mode[guild_id]
+        status = "開啟" if client.loop_mode[guild_id] else "關閉"
+        vc: wavelink.Player = interaction.guild.voice_client
+        song = client.current_songs.get(guild_id)
+        updated_embed = create_music_embed(client, song, vc, guild_id)
+        view = MusicControlView()
+        await interaction.edit_original_response(embed=updated_embed, view=view)
+        embed = discord.Embed(
+            title="🔁 循環模式設置",
+            description=f"循環模式已{status}",
+            color=EMBED_COLORS['success']
+        )
+        await interaction.followup.send(embed=embed)
+
+    async def show_queue(self, interaction: discord.Interaction):
+        try:
+            await interaction.response.defer()
+            guild_id = interaction.guild_id
+            if guild_id not in client.queues:
+                client.queues[guild_id] = deque()
+            queue_list = list(client.queues[guild_id])
+            current_song = client.current_songs.get(guild_id)
+            status_parts = []
+            is_loop = client.loop_mode.get(guild_id, False)
+            if is_loop:
+                status_parts.append("🔄 循環模式：開啟")
+            if guild_id in client.auto_recommend and client.auto_recommend[guild_id]:
+                status_parts.append("✨ 自動推薦：開啟")
+            paginator = QueuePaginator(interaction, queue_list, songs_per_page=10, current_song=current_song, status_parts=status_parts)
+            embed = paginator.get_embed()
+            await interaction.followup.send(f"{interaction.user.mention}", embed=embed, view=paginator)
+        except Exception as e:
+            print(f"顯示播放清單時發生錯誤：{str(e)}")
+            error_embed = create_error_embed(f"顯示播放清單時發生錯誤：{str(e)}")
+            await interaction.followup.send(embed=error_embed)
+        
+    async def shuffle_queue(self, interaction: discord.Interaction):
+        await interaction.response.defer()
+        if not await check_voice_state_and_respond(interaction):
+            return
+        guild_id = interaction.guild_id
+        if guild_id not in client.queues or not client.queues[guild_id]:
+            await interaction.followup.send("❌ 播放清單是空的！")
+            return
+        queue_list = list(client.queues[guild_id])
+        if client.loop_mode.get(guild_id, False):
+            current_song = client.current_songs.get(guild_id)
+            queue_list.remove(current_song)
+            random.shuffle(queue_list)
+            queue_list.insert(0, current_song)
+        else:
+            random.shuffle(queue_list)
+        client.queues[guild_id] = deque(queue_list)
+        embed = discord.Embed(
+            title="🔀 已打亂播放清單",
+            color=EMBED_COLORS['success']
+        )
+        await interaction.followup.send(embed=embed)
+    
+    async def Rewind(self, interaction: discord.Interaction):
+        await interaction.response.defer()
+        if not await check_voice_state_and_respond(interaction):
+            return
+        if not interaction.guild.voice_client:
+            await interaction.edit_original_response(content="❌ 沒有歌曲正在播放！", embed=None, view=None)
+            return
+        vc: wavelink.Player = interaction.guild.voice_client
+        if not vc.playing:
+            await interaction.edit_original_response(content="❌ 沒有歌曲正在播放！", embed=None, view=None)
+            return
+        new_position = max(int(vc.position) - 10000, 0)
+        await vc.seek(new_position)
+        embed = discord.Embed(
+            title="⏪ 已倒轉 10 秒",
+            color=EMBED_COLORS['success']
+        )
+        guild_id = interaction.guild_id
+        vc: wavelink.Player = interaction.guild.voice_client
+        song = client.current_songs.get(guild_id)
+        updated_embed = create_music_embed(client, song, vc, guild_id)
+        view = MusicControlView()
+        await interaction.edit_original_response(embed=updated_embed, view=view)
+        await interaction.followup.send(embed=embed)
+    
+    async def forward(self, interaction: discord.Interaction):
+        await interaction.response.defer()
+        if not await check_voice_state_and_respond(interaction):
+            return
+        if not interaction.guild.voice_client:
+            await interaction.edit_original_response(content="❌ 沒有歌曲正在播放！", embed=None, view=None)
+            return
+        vc: wavelink.Player = interaction.guild.voice_client
+        if not vc.playing:
+            await interaction.edit_original_response(content="❌ 沒有歌曲正在播放！", embed=None, view=None)
+            return
+        guild_id = interaction.guild_id
+        song = client.current_songs.get(guild_id)
+        new_position = min(int(vc.position) + 10000, song.duration * 1000)
+        await vc.seek(new_position)
+        embed = discord.Embed(
+            title="⏩ 已快轉 10 秒",
+            color=EMBED_COLORS['success']
+        )
+        guild_id = interaction.guild_id
+        vc: wavelink.Player = interaction.guild.voice_client
+        song = client.current_songs.get(guild_id)
+        updated_embed = create_music_embed(client, song, vc, guild_id)
+        view = MusicControlView()
+        await interaction.edit_original_response(embed=updated_embed, view=view)
+        await interaction.followup.send(embed=embed)
+
+    async def increase_volume(self, interaction: discord.Interaction):
+        await interaction.response.defer()
+        if not await check_voice_state_and_respond(interaction):
+            return
+        if not interaction.guild.voice_client:
+            await interaction.edit_original_response(content="❌ 沒有歌曲正在播放！", embed=None, view=None)
+            return
+        vc: wavelink.Player = interaction.guild.voice_client
+        current_volume = getattr(vc, 'volume', 100)
+        new_volume = min(current_volume + 5, 200)
+        await vc.set_volume(new_volume)
+        embed = discord.Embed(
+            title="🔊 音量增加",
+            description=f"音量已設置為 {new_volume}%",
+            color=EMBED_COLORS['success']
+        )
+        guild_id = interaction.guild_id
+        vc: wavelink.Player = interaction.guild.voice_client
+        song = client.current_songs.get(guild_id)
+        updated_embed = create_music_embed(client, song, vc, guild_id)
+        view = MusicControlView()
+        await interaction.edit_original_response(embed=updated_embed, view=view)
+        await interaction.followup.send(embed=embed)
+    
+    async def decrease_volume(self, interaction: discord.Interaction):
+        await interaction.response.defer()
+        if not await check_voice_state_and_respond(interaction):
+            return
+        if not interaction.guild.voice_client:
+            await interaction.edit_original_response(content="❌ 沒有歌曲正在播放！", embed=None, view=None)
+            return
+        vc: wavelink.Player = interaction.guild.voice_client
+        current_volume = getattr(vc, 'volume', 100)
+        new_volume = max(current_volume - 5, 0)
+        await vc.set_volume(new_volume)
+        embed = discord.Embed(
+            title="🔊 音量減少",
+            description=f"音量已設置為 {new_volume}%",
+            color=EMBED_COLORS['success']
+        )
+        guild_id = interaction.guild_id
+        vc: wavelink.Player = interaction.guild.voice_client
+        song = client.current_songs.get(guild_id)
+        updated_embed = create_music_embed(client, song, vc, guild_id)
+        view = MusicControlView()
+        await interaction.edit_original_response(embed=updated_embed, view=view)
+        await interaction.followup.send(embed=embed)
+
+    async def update_status(self, interaction: discord.Interaction):
+        await interaction.response.defer()
+        if not await check_voice_state_and_respond(interaction):
+            return
+        guild_id = interaction.guild_id
+        vc: wavelink.Player = interaction.guild.voice_client
+        if not vc or not vc.playing:
+            embed = discord.Embed(
+                    title="⚠️ 未在播放或播放完成",
+                    color=EMBED_COLORS['warning']
+                )
+            await interaction.edit_original_response(embed=embed, view=None)
+        song = client.current_songs.get(guild_id)
+        try:
+            duration = song.duration
+            position = int(vc.position) // 1000  
+            position = min(position, duration)
+            bar_length = 20
+            filled = int((position / duration) * bar_length) if duration > 0 else 0
+            progress_bar = "▬" * filled + "🔘" + "▬" * (bar_length - filled)
+            current_time = f"{position // 60}:{position % 60:02d}"
+            total_time = f"{duration // 60}:{duration % 60:02d}"
+        except Exception as e:
+            print(f"計算進度時發生錯誤：{e}")
+            progress_bar = "▬" * 20
+            current_time = "0:00"
+            total_time = "0:00"
+        embed = discord.Embed(
+            title="🎵 正在播放",
+            description=f"[{song.title}]({song.url})",
+            color=discord.Color.blue()
+        )
+        if song.thumbnail:
+            embed.set_thumbnail(url=song.thumbnail)
+        embed.add_field(
+            name="進度", 
+            value=f"{progress_bar}\n{current_time} / {total_time}", 
+            inline=False
+        )
+        embed.add_field(name="請求者", value=song.requester.mention, inline=True)
+        loop_status = "🔄 開啟" if client.loop_mode.get(guild_id, False) else "➡️ 關閉"
+        embed.add_field(name="循環播放", value=loop_status, inline=True)
+        volume = getattr(vc, 'volume', 100)
+        embed.add_field(name="音量", value=f"🔊 {volume}%", inline=True)
+        view = MusicControlView()
+        await interaction.edit_original_response(embed=embed, view=view)
+
+
+@client.tree.command(name="musiccontrol", description="音樂控制器")
+async def musiccontrol(interaction: discord.Interaction):
+    await interaction.response.defer()
+    if not await check_voice_state_and_respond(interaction):
+        return
+    guild_id = interaction.guild_id
+    vc: wavelink.Player = interaction.guild.voice_client
+    if not vc or not vc.playing:
+        await interaction.followup.send("❌ 沒有歌曲正在播放！")
+        return
+    song = client.current_songs.get(guild_id)
+    embed = create_music_embed(client, song, vc, guild_id)
+    view = MusicControlView()
+    message = await interaction.followup.send(embed=embed, view=view)
+    async def auto_update():
+        while True:
+            await asyncio.sleep(20)
+            if not vc or not vc.playing:
+                embed = discord.Embed(
+                    title="⚠️ 未在播放或播放完成",
+                    color=EMBED_COLORS['warning']
+                )
+                await message.edit(embed=embed, view=None)
+                break
+            updated_embed = create_music_embed(client, song, vc, guild_id)
+            await message.edit(embed=updated_embed, view=view)
+    asyncio.create_task(auto_update())
 
 client.run(config["discord_bot_token"])
