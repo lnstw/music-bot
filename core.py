@@ -170,7 +170,7 @@ async def check_inactive_guilds():
             if guild_id in client.force_stop:
                 client.force_stop[guild_id] = False
             if guild_id in client.show_now_song:
-                client.show_now_song[guild_id] = True
+                client.show_now_song[guild_id] = False
             if guild_id in client.empty_channel_timers:
                 del client.empty_channel_timers[guild_id]
             del client.last_activity[guild_id]
