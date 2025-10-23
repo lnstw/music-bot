@@ -66,8 +66,8 @@ async def process_youtube_playlist(url: str) -> list[str]:
     except Exception as e:
         print(f"YouTube 播放清單處理錯誤: {e}")
         return []
-    
-async def send_playlist_results(interaction: discord.Interaction, added_songs: list, failed_songs: list, playlist_name: str):
+
+async def send_playlist_results(client: MusicClient, interaction: discord.Interaction, added_songs: list, failed_songs: list, playlist_name: str):
     embed = discord.Embed(
         title=f"✅ {playlist_name} 處理完成",
         color=EMBED_COLORS['success']
@@ -83,12 +83,14 @@ async def send_playlist_results(interaction: discord.Interaction, added_songs: l
             value=f"成功添加 {len(added_songs)} 首歌曲\n總時長：{duration_text}",
             inline=False
         )
+        await interaction.edit_original_response(embed=embed)
+
         guild_id = interaction.guild_id
         vc: wavelink.Player = interaction.guild.voice_client
         song = client.current_songs.get(guild_id)
-        embed = create_music_embed(client, song, vc, guild_id)
+        embed2 = create_music_embed(client, song, vc, guild_id)
         view = MusicControlView()
-        message = await interaction.followup.send(embed=embed, view=view)
+        message = await interaction.followup.send(embed=embed2, view=view)
         async def auto_update():
             while True:
                 await asyncio.sleep(20)
@@ -101,6 +103,7 @@ async def send_playlist_results(interaction: discord.Interaction, added_songs: l
                     break
                 updated_embed = create_music_embed(client, song, vc, guild_id)
                 await message.edit(embed=updated_embed, view=view)
+
     asyncio.create_task(auto_update())
     if failed_songs:
         failed_per_page = 10
@@ -125,7 +128,7 @@ async def send_playlist_results(interaction: discord.Interaction, added_songs: l
                     color=EMBED_COLORS['error']
                 )
                 await interaction.followup.send(embed=failed_embed)
-        elif failed_songs:  # 如果失敗歌曲少於10首，直接顯示
+        elif failed_songs:
             failed_embed = discord.Embed(
                 title="❌ 處理失敗歌曲清單",
                 description="\n".join(f"{i+1}. {song}" for i, song in enumerate(failed_songs)),
@@ -135,7 +138,7 @@ async def send_playlist_results(interaction: discord.Interaction, added_songs: l
     else:
         await interaction.edit_original_response(embed=embed)
 
-async def process_playlist(client: MusicClient, interaction: discord.Interaction, search_queries: list[str], playlist_name: str):
+async def process_playlist(client, interaction: discord.Interaction, search_queries: list[str], playlist_name: str):
     try:
         guild_id = interaction.guild_id
         added_songs = []
@@ -148,11 +151,11 @@ async def process_playlist(client: MusicClient, interaction: discord.Interaction
         progress_message = await interaction.followup.send(embed=progress_embed)
         original_url = search_queries[0] if search_queries else ""
         platform = get_platform(original_url)
-        first_song_played = False  # 新增旗標
+        first_song_played = False
         for index, query in enumerate(search_queries):
             try:
                 tracks = await wavelink.Playable.search(query)
-                if tracks:
+                if tracks and tracks[0] is not None:
                     track = tracks[0]
                     song = Song(
                         url=track.uri,
@@ -176,7 +179,7 @@ async def process_playlist(client: MusicClient, interaction: discord.Interaction
                 progress_embed.description = f"正在處理 {playlist_name}\n已完成 {index + 1}/{len(search_queries)} 首歌曲"
                 await progress_message.edit(embed=progress_embed)
             await asyncio.sleep(0.1)
-        await send_playlist_results(interaction, added_songs, failed_songs, playlist_name)
+        await send_playlist_results(client, interaction, added_songs, failed_songs, playlist_name)
     except Exception as e:
         print(f"處理播放清單時發生錯誤：{str(e)}")
         error_embed = create_error_embed(f"處理播放清單時發生錯誤：{str(e)}")
