@@ -1,0 +1,31 @@
+slash.json
+/.vscode
+/.idea
+*/__pycache__/*
+__pycache__/*
+.venv/*
+
+*.pyc
+token.txt
+
+data.json
+
+history/*
+Cogs/tickets/history/*
+
+# Python specific files
+__pycache__/
+*.pyc
+
+# PDM specific files
+.pdm-python
+.pdm.toml
+.pdm-lock.yaml
+
+# Environment files
+.env
+
+.local
+.local/*
+config.txt
+.cache
