@@ -51,7 +51,7 @@ async def play_next(client: MusicClient, guild: discord.Guild, vc: wavelink.Play
                     track = tracks[0]
                     await vc.play(track)
                     await client.update_presence(next_song.title)
-                    if client.show_now_song.get(guild_id, True):
+                    if client.show_now_song.get(guild_id, False):
                         embed = create_now_playing_embed(next_song)
                         if client.loop_mode.get(guild_id, False):
                             queue_list = list(client.queues[guild_id])
@@ -89,7 +89,7 @@ async def get_recommendations(current_song: Song) -> Optional[Song]:
         tracks = await wavelink.Playable.search(search_query)
         tracks = [t for t in tracks if t.uri != current_song.url]
         if tracks:
-            track = random.choice(tracks)  # 隨機選擇一首
+            track = random.choice(tracks)
             return Song(
                 url=track.uri,
                 title=track.title,
