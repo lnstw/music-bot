@@ -70,6 +70,43 @@ def create_error_embed(error_message: str) -> discord.Embed:
     embed.set_footer(text="機器人錯誤回報")
     return embed
 
+def create_music_embed(client, song, vc, guild_id):
+    try:
+        duration = song.duration
+        position = int(vc.position) // 1000
+        position = min(position, duration)
+        bar_length = 20
+        filled = int((position / duration) * bar_length) if duration > 0 else 0
+        progress_bar = "▬" * filled + "🔘" + "▬" * (bar_length - filled)
+        current_time = f"{position // 60}:{position % 60:02d}"
+        total_time = f"{duration // 60}:{duration % 60:02d}"
+    except Exception:
+        progress_bar = "▬" * 20
+        current_time = "0:00"
+        total_time = "0:00"
+    if vc.paused:
+            embed = discord.Embed(
+                title="⏸️ 已暫停",
+                description=f"[{song.title}]({song.url})",
+                color=discord.Color.yellow()
+            )
+    else:   
+        embed = discord.Embed(
+            title="▶️ 正在播放",
+            description=f"[{song.title}]({song.url})",
+            color=discord.Color.green()
+        )
+    
+    if song.thumbnail:
+        embed.set_thumbnail(url=song.thumbnail)
+    embed.add_field(name="進度", value=f"{progress_bar}\n{current_time} / {total_time}", inline=False)
+    embed.add_field(name="請求者", value=song.requester.mention, inline=True)
+    loop_status = "🔄 開啟" if client.loop_mode.get(guild_id, False) else "➡️ 關閉"
+    embed.add_field(name="循環播放", value=loop_status, inline=True)
+    volume = getattr(vc, 'volume', 100)
+    embed.add_field(name="音量", value=f"🔊 {volume}%", inline=True)
+    return embed
+
 async def check_voice_state_and_respond(interaction: discord.Interaction) -> bool:
     if not interaction.user.voice:
         embed = discord.Embed(
@@ -77,6 +114,6 @@ async def check_voice_state_and_respond(interaction: discord.Interaction) -> boo
             description="請先加入語音頻道",
             color=EMBED_COLORS['error']
         )
-        await interaction.followup.send(embed=embed)
+        await interaction.followup.send(f"{interaction.user.mention}",embed=embed)
         return False
     return True
