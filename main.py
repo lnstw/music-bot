@@ -1366,39 +1366,22 @@ class MusicControlView(discord.ui.View):
                 )
             await interaction.edit_original_response(embed=embed, view=None)
         song = client.current_songs.get(guild_id)
-        try:
-            duration = song.duration
-            position = int(vc.position) // 1000  
-            position = min(position, duration)
-            bar_length = 20
-            filled = int((position / duration) * bar_length) if duration > 0 else 0
-            progress_bar = "▬" * filled + "🔘" + "▬" * (bar_length - filled)
-            current_time = f"{position // 60}:{position % 60:02d}"
-            total_time = f"{duration // 60}:{duration % 60:02d}"
-        except Exception as e:
-            print(f"計算進度時發生錯誤：{e}")
-            progress_bar = "▬" * 20
-            current_time = "0:00"
-            total_time = "0:00"
-        embed = discord.Embed(
-            title="🎵 正在播放",
-            description=f"[{song.title}]({song.url})",
-            color=discord.Color.blue()
-        )
-        if song.thumbnail:
-            embed.set_thumbnail(url=song.thumbnail)
-        embed.add_field(
-            name="進度", 
-            value=f"{progress_bar}\n{current_time} / {total_time}", 
-            inline=False
-        )
-        embed.add_field(name="請求者", value=song.requester.mention, inline=True)
-        loop_status = "🔄 開啟" if client.loop_mode.get(guild_id, False) else "➡️ 關閉"
-        embed.add_field(name="循環播放", value=loop_status, inline=True)
-        volume = getattr(vc, 'volume', 100)
-        embed.add_field(name="音量", value=f"🔊 {volume}%", inline=True)
+        embed = create_music_embed(client, song, vc, guild_id)
         view = MusicControlView()
         await interaction.edit_original_response(embed=embed, view=view)
+        async def auto_update():
+            while True:
+                await asyncio.sleep(20)
+                if not vc or not vc.playing:
+                    embed = discord.Embed(
+                        title="⚠️ 未在播放或播放完成",
+                        color=EMBED_COLORS['warning']
+                    )
+                    await interaction.edit_original_response(embed=embed, view=None)
+                    break
+                updated_embed = create_music_embed(client, song, vc, guild_id)
+                await interaction.edit_original_response(embed=updated_embed, view=view)
+            asyncio.create_task(auto_update())
 
 
 @client.tree.command(name="musiccontrol", description="音樂控制器")
