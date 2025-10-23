@@ -1,12 +1,9 @@
-<<<<<<< HEAD
 discord.py
 wavelink
 spotipy
 requests
-=======
 discord.py
 wavelink
 spotipy
 requests
->>>>>>> refs/remotes/music-bot/main
 Pillow
