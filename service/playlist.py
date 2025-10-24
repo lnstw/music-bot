@@ -140,13 +140,9 @@ async def process_playlist(
             color=EMBED_COLORS['info']
         )
         progress_message = await interaction.followup.send(embed=progress_embed)
-
         original_url = search_queries[0] if search_queries else ""
         platform = get_platform(original_url)
-        first_song_played = False
-
-        queue_list = list(client.queues[guild_id])
-
+        queue_list = list(client.queues.get(guild_id, deque()))
         queries = reversed(search_queries) if insert_next else search_queries
         for index, query in enumerate(queries):
             try:
@@ -161,7 +157,6 @@ async def process_playlist(
                         requester=interaction.user,
                         platform=platform
                     )
-
                     if insert_next:
                         if client.loop_mode.get(guild_id, False):
                             current_song = client.current_songs.get(guild_id)
@@ -173,27 +168,35 @@ async def process_playlist(
                         queue_list.append(song)
 
                     added_songs.append(song)
-
-                    if not first_song_played and not interaction.guild.voice_client.playing:
-                        await play_next(guild=interaction.guild, vc=interaction.guild.voice_client)
-                        first_song_played = True
                 else:
                     failed_songs.append(query)
             except Exception as e:
-                print(f"處理歌曲時發生錯誤：{str(e)}")
+                print(f"[process_playlist] 處理歌曲時發生錯誤：{str(e)}")
                 failed_songs.append(query)
-
             if (index + 1) % 20 == 0 or index == len(search_queries) - 1:
                 progress_embed.description = f"正在處理 {playlist_name}\n已完成 {index + 1}/{len(search_queries)} 首歌曲"
                 await progress_message.edit(embed=progress_embed)
-
             await asyncio.sleep(0.1)
-
-        client.queues[guild_id] = deque(queue_list)  # 更新隊列
+        client.queues[guild_id] = deque(queue_list)
+        vc: wavelink.Player = interaction.guild.voice_client
+        if added_songs and not vc.playing:
+            await play_next(guild=interaction.guild, vc=vc)
+        song = client.current_songs.get(guild_id)
+        if song:
+            embed = create_music_embed(song, vc, guild_id)
+            view = MusicControlView()
+            message = await interaction.followup.send(embed=embed, view=view)
+            await start_auto_update(guild_id, vc, message, view)
+        else:
+            embed = discord.Embed(
+                title="⚠️ 播放失敗",
+                description="播放清單可能無法播放任何歌曲",
+                color=EMBED_COLORS['error']
+            )
+            await interaction.followup.send(embed=embed)
         await send_playlist_results(interaction, added_songs, failed_songs, playlist_name)
-
     except Exception as e:
-        print(f"處理播放清單時發生錯誤：{str(e)}")
+        print(f"[process_playlist] 播放清單處理錯誤：{str(e)}")
         error_embed = create_error_embed(f"處理播放清單時發生錯誤：{str(e)}")
         await interaction.followup.send(embed=error_embed)
 
