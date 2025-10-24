@@ -19,8 +19,8 @@ class MusicControlView(discord.ui.View):
         self.shuffle_button = Button(label="🔀", style=discord.ButtonStyle.primary)
         self.Rewind_button = Button(label="⏪", style=discord.ButtonStyle.primary)
         self.forward_button = Button(label="⏩", style=discord.ButtonStyle.primary)
-        self.sound_plus_button = Button(label="🔉➕", style=discord.ButtonStyle.primary)
         self.sound_minus_button = Button(label="🔉➖", style=discord.ButtonStyle.primary)
+        self.sound_plus_button = Button(label="🔉➕", style=discord.ButtonStyle.primary)
         self.update_button = Button(label="更新", style=discord.ButtonStyle.primary)
 
         self.next_button.callback = self.next_play
@@ -30,8 +30,8 @@ class MusicControlView(discord.ui.View):
         self.shuffle_button.callback = self.shuffle_queue
         self.Rewind_button.callback = self.Rewind
         self.forward_button.callback = self.forward
-        self.sound_plus_button.callback = self.increase_volume
         self.sound_minus_button.callback = self.decrease_volume
+        self.sound_plus_button.callback = self.increase_volume
         self.update_button.callback = self.update_status
 
         self.add_item(self.play_button)
@@ -41,8 +41,8 @@ class MusicControlView(discord.ui.View):
         self.add_item(self.shuffle_button)
         self.add_item(self.Rewind_button)
         self.add_item(self.forward_button)
-        self.add_item(self.sound_plus_button)
         self.add_item(self.sound_minus_button)
+        self.add_item(self.sound_plus_button)
         self.add_item(self.update_button)
 
     async def next_play(self, interaction: discord.Interaction):
@@ -104,7 +104,12 @@ class MusicControlView(discord.ui.View):
                 title="❌ 沒有歌曲正在播放！",
                 color=EMBED_COLORS['error']
             )
-        await interaction.followup.send(embed=embed, ephemeral=True)
+        guild_id = interaction.guild_id
+        song = client.current_songs.get(guild_id)
+        updated_embed = create_music_embed(client, song, vc, guild_id)
+        view = MusicControlView()
+        await interaction.edit_original_response(embed=updated_embed, view=view)
+        await interaction.followup.send(embed=embed)
     
     async def toggle_loop(self, interaction: discord.Interaction):
         await interaction.response.defer()

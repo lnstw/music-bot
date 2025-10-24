@@ -162,9 +162,10 @@ async def process_playlist(
         platform = get_platform(original_url)
         first_song_played = False
 
-        queue_list = list(client.queues[guild_id])  # 轉為 list 以便插入
+        queue_list = list(client.queues[guild_id])
 
-        for index, query in enumerate(search_queries):
+        queries = reversed(search_queries) if insert_next else search_queries
+        for index, query in enumerate(queries):
             try:
                 tracks = await wavelink.Playable.search(query)
                 if tracks and tracks[0] is not None:
