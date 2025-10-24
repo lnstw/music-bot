@@ -1,5 +1,7 @@
 import discord
-from core import config, Song , EMBED_COLORS
+import wavelink
+import asyncio
+from core import config, Song , EMBED_COLORS, client
 
 def create_song_embed(song: Song, position: int) -> discord.Embed:
     platform_info = {
@@ -70,7 +72,8 @@ def create_error_embed(error_message: str) -> discord.Embed:
     embed.set_footer(text="機器人錯誤回報")
     return embed
 
-def create_music_embed(client, song, vc, guild_id):
+
+def create_music_embed(song, vc, guild_id):
     try:
         duration = song.duration
         position = int(vc.position) // 1000
@@ -105,6 +108,7 @@ def create_music_embed(client, song, vc, guild_id):
     embed.add_field(name="循環播放", value=loop_status, inline=True)
     volume = getattr(vc, 'volume', 100)
     embed.add_field(name="音量", value=f"🔊 {volume}%", inline=True)
+    embed.set_footer(text=f"好聽嗎? • 音樂控制器請使用最底下的或是使用(/musiccontrol) :D")
     return embed
 
 async def check_voice_state_and_respond(interaction: discord.Interaction) -> bool:
@@ -117,3 +121,52 @@ async def check_voice_state_and_respond(interaction: discord.Interaction) -> boo
         await interaction.followup.send(f"{interaction.user.mention}",embed=embed)
         return False
     return True
+
+async def update_embed(target: discord.Message | discord.Interaction, embed: discord.Embed, view: discord.ui.View = None):
+    try:
+        if isinstance(target, discord.Message):
+            await target.edit(embed=embed, view=view)
+        elif isinstance(target, discord.Interaction):
+            await target.edit_original_response(embed=embed, view=view)
+    except Exception as e:
+        print(f"[update_embed] 更新失敗：{e}")
+
+async def start_auto_update(
+    guild_id: int,
+    vc: wavelink.Player,
+    target: discord.Message | discord.Interaction,
+    view: discord.ui.View
+):
+    old_task = client.auto_update_tasks.get(guild_id)
+    if old_task and not old_task.done():
+        old_task.cancel()
+
+    async def auto_update():
+        try:
+            while True:
+                await asyncio.sleep(20)
+
+                if not vc or not vc.playing:
+                    embed = discord.Embed(
+                        title="⚠️ 未在播放或播放完成",
+                        color=EMBED_COLORS['warning']
+                    )
+                    await update_embed(target, embed, view=None)
+                    break
+
+                song = client.current_songs.get(guild_id)
+                if not song:
+                    embed = discord.Embed(
+                        title="⚠️ 無法取得目前歌曲資訊",
+                        description="可能已停止播放或資料未同步",
+                        color=EMBED_COLORS['warning']
+                    )
+                    await update_embed(target, embed, view=None)
+                    break
+
+                updated_embed = create_music_embed(song, vc, guild_id)
+                await update_embed(target, updated_embed, view=view)
+        except Exception as e:
+            print(f"[AutoUpdate] 發生錯誤：{e}")
+
+    client.auto_update_tasks[guild_id] = asyncio.create_task(auto_update())

@@ -4,10 +4,8 @@ import random
 import wavelink
 import asyncio
 from collections import deque
-from core import MusicClient, EMBED_COLORS
-from service.embed import create_music_embed, create_error_embed, check_voice_state_and_respond
-
-client = MusicClient()
+from core import client, EMBED_COLORS
+from service.embed import create_music_embed, create_error_embed, check_voice_state_and_respond, start_auto_update
 
 class MusicControlView(discord.ui.View):
     def __init__(self):
@@ -76,7 +74,7 @@ class MusicControlView(discord.ui.View):
                 value=f"[{next_song.title}]({next_song.url})",
                 inline=False
             )
-        await interaction.followup.send(embed=embed, ephemeral=True)
+        await interaction.followup.send(embed=embed)
         await vc.stop()
 
     async def play_pause(self, interaction: discord.Interaction):
@@ -106,7 +104,7 @@ class MusicControlView(discord.ui.View):
             )
         guild_id = interaction.guild_id
         song = client.current_songs.get(guild_id)
-        updated_embed = create_music_embed(client, song, vc, guild_id)
+        updated_embed = create_music_embed(song, vc, guild_id)
         view = MusicControlView()
         await interaction.edit_original_response(embed=updated_embed, view=view)
         await interaction.followup.send(embed=embed)
@@ -122,7 +120,7 @@ class MusicControlView(discord.ui.View):
         status = "開啟" if client.loop_mode[guild_id] else "關閉"
         vc: wavelink.Player = interaction.guild.voice_client
         song = client.current_songs.get(guild_id)
-        updated_embed = create_music_embed(client, song, vc, guild_id)
+        updated_embed = create_music_embed(song, vc, guild_id)
         view = MusicControlView()
         await interaction.edit_original_response(embed=updated_embed, view=view)
         embed = discord.Embed(
@@ -224,7 +222,7 @@ class MusicControlView(discord.ui.View):
         guild_id = interaction.guild_id
         vc: wavelink.Player = interaction.guild.voice_client
         song = client.current_songs.get(guild_id)
-        updated_embed = create_music_embed(client, song, vc, guild_id)
+        updated_embed = create_music_embed(song, vc, guild_id)
         view = MusicControlView()
         await interaction.edit_original_response(embed=updated_embed, view=view)
         await interaction.followup.send(embed=embed)
@@ -248,7 +246,7 @@ class MusicControlView(discord.ui.View):
         guild_id = interaction.guild_id
         vc: wavelink.Player = interaction.guild.voice_client
         song = client.current_songs.get(guild_id)
-        updated_embed = create_music_embed(client, song, vc, guild_id)
+        updated_embed = create_music_embed(song, vc, guild_id)
         view = MusicControlView()
         await interaction.edit_original_response(embed=updated_embed, view=view)
         await interaction.followup.send(embed=embed)
@@ -272,7 +270,7 @@ class MusicControlView(discord.ui.View):
         guild_id = interaction.guild_id
         vc: wavelink.Player = interaction.guild.voice_client
         song = client.current_songs.get(guild_id)
-        updated_embed = create_music_embed(client, song, vc, guild_id)
+        updated_embed = create_music_embed(song, vc, guild_id)
         view = MusicControlView()
         await interaction.edit_original_response(embed=updated_embed, view=view)
         await interaction.followup.send(embed=embed)
@@ -290,22 +288,10 @@ class MusicControlView(discord.ui.View):
                 )
             await interaction.edit_original_response(embed=embed, view=None)
         song = client.current_songs.get(guild_id)
-        embed = create_music_embed(client, song, vc, guild_id)
+        embed = create_music_embed(song, vc, guild_id)
         view = MusicControlView()
         await interaction.edit_original_response(embed=embed, view=view)
-        async def auto_update():
-            while True:
-                await asyncio.sleep(20)
-                if not vc or not vc.playing:
-                    embed = discord.Embed(
-                        title="⚠️ 未在播放或播放完成",
-                        color=EMBED_COLORS['warning']
-                    )
-                    await interaction.edit_original_response(embed=embed, view=None)
-                    break
-                updated_embed = create_music_embed(client, song, vc, guild_id)
-                await interaction.edit_original_response(embed=updated_embed, view=view)
-            asyncio.create_task(auto_update())
+        await start_auto_update(guild_id, vc, interaction, view) 
 
 class QueuePaginator(View):
     def __init__(self, interaction, queue_list, songs_per_page=10, current_song=None, status_parts=None):

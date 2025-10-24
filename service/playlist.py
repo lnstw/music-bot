@@ -4,13 +4,10 @@ from typing import Optional
 from urllib.parse import urlparse
 import wavelink
 from collections import deque
-from core import MusicClient, EMBED_COLORS, Song
-from service.embed import create_error_embed
+from core import client, EMBED_COLORS, Song
+from service.embed import create_error_embed, create_music_embed, start_auto_update
 from service.play import play_next
-from service.embed import create_music_embed
 from service.view import MusicControlView
-
-client = MusicClient()
 
 async def process_spotify_track(spotify_client, url: str) -> Optional[str]:
     try:
@@ -68,7 +65,7 @@ async def process_youtube_playlist(url: str) -> list[str]:
         print(f"YouTube 播放清單處理錯誤: {e}")
         return []
 
-async def send_playlist_results(client: MusicClient, interaction: discord.Interaction, added_songs: list, failed_songs: list, playlist_name: str):
+async def send_playlist_results(interaction: discord.Interaction, added_songs: list, failed_songs: list, playlist_name: str):
     embed = discord.Embed(
         title=f"✅ {playlist_name} 處理完成",
         color=EMBED_COLORS['success']
@@ -89,23 +86,10 @@ async def send_playlist_results(client: MusicClient, interaction: discord.Intera
         guild_id = interaction.guild_id
         vc: wavelink.Player = interaction.guild.voice_client
         song = client.current_songs.get(guild_id)
-        embed2 = create_music_embed(client, song, vc, guild_id)
+        embed2 = create_music_embed(song, vc, guild_id)
         view = MusicControlView()
         message = await interaction.followup.send(embed=embed2, view=view)
-        async def auto_update():
-            while True:
-                await asyncio.sleep(20)
-                if not vc or not vc.playing:
-                    embed = discord.Embed(
-                        title="⚠️ 未在播放或播放完成",
-                        color=EMBED_COLORS['warning']
-                    )
-                    await message.edit(embed=embed, view=None)
-                    break
-                updated_embed = create_music_embed(client, song, vc, guild_id)
-                await message.edit(embed=updated_embed, view=view)
-
-    asyncio.create_task(auto_update())
+        await start_auto_update(guild_id, vc, message, view)
     if failed_songs:
         failed_per_page = 10
         total_failed = len(failed_songs)
@@ -140,7 +124,6 @@ async def send_playlist_results(client: MusicClient, interaction: discord.Intera
         await interaction.edit_original_response(embed=embed)
 
 async def process_playlist(
-    client,
     interaction: discord.Interaction,
     search_queries: list[str],
     playlist_name: str,
@@ -192,7 +175,7 @@ async def process_playlist(
                     added_songs.append(song)
 
                     if not first_song_played and not interaction.guild.voice_client.playing:
-                        await play_next(client=client, guild=interaction.guild, vc=interaction.guild.voice_client)
+                        await play_next(guild=interaction.guild, vc=interaction.guild.voice_client)
                         first_song_played = True
                 else:
                     failed_songs.append(query)
@@ -207,7 +190,7 @@ async def process_playlist(
             await asyncio.sleep(0.1)
 
         client.queues[guild_id] = deque(queue_list)  # 更新隊列
-        await send_playlist_results(client, interaction, added_songs, failed_songs, playlist_name)
+        await send_playlist_results(interaction, added_songs, failed_songs, playlist_name)
 
     except Exception as e:
         print(f"處理播放清單時發生錯誤：{str(e)}")

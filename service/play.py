@@ -2,11 +2,11 @@ import discord, random
 from typing import Optional
 import wavelink
 from collections import deque
-from core import MusicClient, EMBED_COLORS, Song
+from core import client, EMBED_COLORS, Song
 from service.embed import create_now_playing_embed, create_error_embed
 from service.channel import send_message_to_last_channel
 
-async def play_next(client: MusicClient, guild: discord.Guild, vc: wavelink.Player):
+async def play_next(guild: discord.Guild, vc: wavelink.Player):
     guild_id = guild.id
     if client.force_stop.get(guild_id, False):
         await client.update_presence()
@@ -15,7 +15,7 @@ async def play_next(client: MusicClient, guild: discord.Guild, vc: wavelink.Play
                 description="播放清單已播放完畢",
                 color=EMBED_COLORS['success']
         )
-        await send_message_to_last_channel(client=client, guild_id=guild_id, embed=embed)
+        await send_message_to_last_channel(guild_id=guild_id, embed=embed)
         return
     try:
         if not client.queues[guild_id]:
@@ -56,10 +56,10 @@ async def play_next(client: MusicClient, guild: discord.Guild, vc: wavelink.Play
                             queue_list = list(client.queues[guild_id])
                             total = len(queue_list)
                             embed.set_footer(text=f"🔄 循環播放中 總共 {total} 首")
-                        await send_message_to_last_channel(client=client, guild_id=guild_id, embed=embed)
+                        await send_message_to_last_channel(guild_id=guild_id, embed=embed)
             except Exception as e:
                 print(f"播放歌曲時發生錯誤: {e}")
-                await play_next(client=client, guild=guild, vc=vc)
+                await play_next(guild=guild, vc=vc)
         else:
             await client.update_presence()
             embed = discord.Embed(
@@ -67,13 +67,13 @@ async def play_next(client: MusicClient, guild: discord.Guild, vc: wavelink.Play
                 description="播放清單已播放完畢",
                 color=EMBED_COLORS['success']
             )
-            await send_message_to_last_channel(client=client, guild_id=guild_id, embed=embed)
+            await send_message_to_last_channel(guild_id=guild_id, embed=embed)
     except Exception as e:
         print(f"播放下一首時發生錯誤：{e}")
         error_embed = create_error_embed(f"播放時發生錯誤：{str(e)}")
-        await send_message_to_last_channel(client=client, guild_id=guild_id, embed=error_embed)
+        await send_message_to_last_channel(guild_id=guild_id, embed=error_embed)
 
-async def get_next_recommendation(client: MusicClient, guild_id: int) -> Optional[Song]:
+async def get_next_recommendation(guild_id: int) -> Optional[Song]:
     try:
         if guild_id in client.current_songs:
             current_song = client.current_songs[guild_id]

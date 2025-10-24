@@ -73,6 +73,7 @@ class MusicClient(discord.Client):
         self.last_activity = {}
         self.default_volume = 10
         self.status_index = 0
+        self.auto_update_tasks: dict[int, asyncio.Task] = {}
         self.spotify = spotipy.Spotify(client_credentials_manager=SpotifyClientCredentials(
             client_id=config["spotify_client_id"],
             client_secret=config["spotify_client_secret"],

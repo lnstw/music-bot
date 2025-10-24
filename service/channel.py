@@ -1,7 +1,7 @@
 import discord
-from core import MusicClient
+from core import client
 
-async def send_message_to_last_channel(client: MusicClient, guild_id: int, message: str = None, embed: discord.Embed = None):
+async def send_message_to_last_channel(guild_id: int, message: str = None, embed: discord.Embed = None):
     if guild_id in client.last_channels:
         guild = client.get_guild(guild_id)
         if guild:
