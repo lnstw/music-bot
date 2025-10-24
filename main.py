@@ -790,6 +790,8 @@ async def playnext(interaction: discord.Interaction, query: str):
         await interaction.response.defer()
         if not await check_voice_state_and_respond(interaction):
             return
+
+        guild_id = interaction.guild_id
         if not interaction.guild.voice_client:
             try:
                 vc: wavelink.Player = await interaction.user.voice.channel.connect(cls=wavelink.Player)
@@ -800,31 +802,81 @@ async def playnext(interaction: discord.Interaction, query: str):
                 return
         else:
             vc: wavelink.Player = interaction.guild.voice_client
-        guild_id = interaction.guild_id
+
         if guild_id not in client.queues:
             client.queues[guild_id] = deque()
         client.last_channels[guild_id] = interaction.channel_id
-        search_queries = []
+
+        # 🔍 判斷是否為播放清單
+        is_playlist = False
+        if 'spotify.com' in query:
+            if 'playlist' in query or 'album' in query:
+                is_playlist = True
+        elif 'youtube.com' in query or 'youtu.be' in query:
+            if 'list=' in query:
+                is_playlist = True
+        elif 'music.apple.com' in query:
+            if 'playlist' in query or 'album' in query:
+                is_playlist = True
+
         platform = get_platform(query)
+
+        if is_playlist:
+            search_queries = []
+            try:
+                if platform == 'spotify':
+                    if 'playlist' in query.lower():
+                        search_queries = await process_spotify_playlist(client.spotify, query)
+                    elif 'album' in query.lower():
+                        search_queries = await process_spotify_album(client.spotify, query)
+                elif platform == 'youtube':
+                    if 'list=' in query:
+                        search_queries = await process_youtube_playlist(query)
+
+                if not search_queries:
+                    embed = discord.Embed(
+                        title="❌ 無法處理播放清單",
+                        description="播放清單可能是空的或無法訪問",
+                        color=EMBED_COLORS['error']
+                    )
+                    await interaction.followup.send(embed=embed)
+                    return
+
+                await process_playlist(
+                    client=client,
+                    interaction=interaction,
+                    search_queries=search_queries,
+                    playlist_name="插播播放清單",
+                    insert_next=True
+                )
+                return
+            except Exception as e:
+                print(f"處理播放清單時發生錯誤: {e}")
+                error_embed = create_error_embed(f"處理播放清單時發生錯誤：{str(e)}")
+                await interaction.followup.send(embed=error_embed)
+                return
+
+        # 🎵 單曲插播邏輯
+        search_queries = []
         try:
             if platform == 'spotify':
-                if 'playlist' in query.lower() or 'album' in query.lower():
+                if 'track' in query.lower():
+                    search_query = await process_spotify_track(client.spotify, query)
+                    if search_query:
+                        search_queries = [search_query]
+                else:
                     embed = discord.Embed(
                         title="⚠️ 不支援的功能",
-                        description="插播功能不支援播放清單或專輯",
+                        description="插播功能不支援 Spotify 播放清單或專輯連結",
                         color=EMBED_COLORS['warning']
                     )
                     await interaction.followup.send(embed=embed)
                     return
-                elif 'track' in query.lower():
-                    search_query = await process_spotify_track(client.spotify, query)
-                    if search_query:
-                        search_queries = [search_query]
             elif platform == 'youtube':
-                if 'playlist' in query.lower() or 'list=' in query:
+                if 'list=' in query:
                     embed = discord.Embed(
                         title="⚠️ 不支援的功能",
-                        description="插播功能不支援播放清單",
+                        description="插播功能不支援 YouTube 播放清單連結",
                         color=EMBED_COLORS['warning']
                     )
                     await interaction.followup.send(embed=embed)
@@ -833,6 +885,7 @@ async def playnext(interaction: discord.Interaction, query: str):
                     search_queries = [query]
             else:
                 search_queries = [query]
+
             if not search_queries:
                 embed = discord.Embed(
                     title="❌ 處理失敗",
@@ -841,6 +894,7 @@ async def playnext(interaction: discord.Interaction, query: str):
                 )
                 await interaction.followup.send(embed=embed)
                 return
+
             tracks = await wavelink.Playable.search(search_queries[0])
             if tracks:
                 track = tracks[0]
@@ -855,14 +909,12 @@ async def playnext(interaction: discord.Interaction, query: str):
                 queue_list = list(client.queues[guild_id])
                 if client.loop_mode.get(guild_id, False):
                     current_song = client.current_songs.get(guild_id)
-                    if current_song in queue_list:
-                        insert_pos = queue_list.index(current_song) + 1
-                    else:
-                        insert_pos = 0
-                    queue_list.insert(insert_pos, song)
+                    insert_pos = queue_list.index(current_song) + 1 if current_song in queue_list else 0
                 else:
-                    queue_list.insert(0, song)
+                    insert_pos = 0
+                queue_list.insert(insert_pos, song)
                 client.queues[guild_id] = deque(queue_list)
+
                 embed = discord.Embed(
                     title="⏭️ 已加入下一首播放",
                     description=f"[{song.title}]({song.url})",
@@ -876,6 +928,7 @@ async def playnext(interaction: discord.Interaction, query: str):
                 embed.add_field(name="請求者", value=song.requester.mention, inline=True)
                 embed.add_field(name="平台", value=platform.title(), inline=True)
                 await interaction.followup.send(embed=embed)
+
                 if not vc.playing:
                     await play_next(client=client, guild=interaction.guild, vc=vc)
             else:

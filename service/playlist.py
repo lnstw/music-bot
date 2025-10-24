@@ -3,6 +3,7 @@ import discord
 from typing import Optional
 from urllib.parse import urlparse
 import wavelink
+from collections import deque
 from core import MusicClient, EMBED_COLORS, Song
 from service.embed import create_error_embed
 from service.play import play_next
@@ -138,20 +139,31 @@ async def send_playlist_results(client: MusicClient, interaction: discord.Intera
     else:
         await interaction.edit_original_response(embed=embed)
 
-async def process_playlist(client, interaction: discord.Interaction, search_queries: list[str], playlist_name: str):
+async def process_playlist(
+    client,
+    interaction: discord.Interaction,
+    search_queries: list[str],
+    playlist_name: str,
+    insert_next: bool = False
+):
     try:
         guild_id = interaction.guild_id
         added_songs = []
         failed_songs = []
+
         progress_embed = discord.Embed(
             title="⏳ 正在處理播放清單",
             description=f"正在處理 {playlist_name}\n共 {len(search_queries)} 首歌曲",
             color=EMBED_COLORS['info']
         )
         progress_message = await interaction.followup.send(embed=progress_embed)
+
         original_url = search_queries[0] if search_queries else ""
         platform = get_platform(original_url)
         first_song_played = False
+
+        queue_list = list(client.queues[guild_id])  # 轉為 list 以便插入
+
         for index, query in enumerate(search_queries):
             try:
                 tracks = await wavelink.Playable.search(query)
@@ -165,8 +177,19 @@ async def process_playlist(client, interaction: discord.Interaction, search_quer
                         requester=interaction.user,
                         platform=platform
                     )
-                    client.queues[guild_id].append(song)
+
+                    if insert_next:
+                        if client.loop_mode.get(guild_id, False):
+                            current_song = client.current_songs.get(guild_id)
+                            insert_pos = queue_list.index(current_song) + 1 if current_song in queue_list else 0
+                        else:
+                            insert_pos = 0
+                        queue_list.insert(insert_pos, song)
+                    else:
+                        queue_list.append(song)
+
                     added_songs.append(song)
+
                     if not first_song_played and not interaction.guild.voice_client.playing:
                         await play_next(client=client, guild=interaction.guild, vc=interaction.guild.voice_client)
                         first_song_played = True
@@ -175,11 +198,16 @@ async def process_playlist(client, interaction: discord.Interaction, search_quer
             except Exception as e:
                 print(f"處理歌曲時發生錯誤：{str(e)}")
                 failed_songs.append(query)
+
             if (index + 1) % 20 == 0 or index == len(search_queries) - 1:
                 progress_embed.description = f"正在處理 {playlist_name}\n已完成 {index + 1}/{len(search_queries)} 首歌曲"
                 await progress_message.edit(embed=progress_embed)
+
             await asyncio.sleep(0.1)
+
+        client.queues[guild_id] = deque(queue_list)  # 更新隊列
         await send_playlist_results(client, interaction, added_songs, failed_songs, playlist_name)
+
     except Exception as e:
         print(f"處理播放清單時發生錯誤：{str(e)}")
         error_embed = create_error_embed(f"處理播放清單時發生錯誤：{str(e)}")
