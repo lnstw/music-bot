@@ -276,9 +276,6 @@ class MusicControlView(discord.ui.View):
         await interaction.followup.send(embed=embed)
 
     async def update_status(self, interaction: discord.Interaction):
-        await interaction.response.defer()
-        if not await check_voice_state_and_respond(interaction):
-            return
         guild_id = interaction.guild_id
         vc: wavelink.Player = interaction.guild.voice_client
         if not vc or not vc.playing:
