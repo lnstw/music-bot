@@ -11,14 +11,16 @@
    - .venv\Scripts\activate
 3. 安裝相依套件（請依專案 requirements.txt 安裝）  
    - pip install -r requirements.txt
-4. 執行一次 main.py 產生 config.txt  
+4. 執行一次 main.py 產生 .env
    - python main.py
-5. 編輯 `config.txt`，填入你的資訊（請勿上傳 token/secret 到公開倉庫）
+5. 編輯 `.env`，填入你的資訊
    - discord_user_name=
    - discord_user_id=
+   - discord_guild_id=
+   - discord_voice_channel_id=
    - spotify_client_id=
    - spotify_client_secret=
-   - node_url=（Lavalink）
+   - node_url=
    - node_pw=
    - discord_bot_token=
 
@@ -28,15 +30,17 @@
 ---
 
 ## ⚙️ 設定說明（範例）
-請在 config.txt 填入對應的值（範例，不要放真實 token）：
+請在 .env 填入對應的值（範例，不要放真實 token）：
 ```
-discord_user_name=yourname
-discord_user_id=123456789012345678
-spotify_client_id=xxxxxxxxxxxxxxxxxxxx
-spotify_client_secret=xxxxxxxxxxxxxxxxxxxx
-node_url=http://your-lavalink:2333
-node_pw=youshallnotpass
-discord_bot_token=YOUR_BOT_TOKEN
+discord_user_name=請填入你的discord名稱
+discord_user_id=請填入你的discord_id
+discord_guild_id=請填入你的伺服器ID(建議是單獨機器人的群組,機器人掛著使用)
+discord_voice_channel_id=請填入你的語音頻道ID(機器人掛著使用)
+spotify_client_id=請填入你的client_id
+spotify_client_secret=請填入你的client_secret
+node_url=請填入你的lavalink網址
+node_pw=請填入你的lavalink密碼
+discord_bot_token=請填入你的discord token
 ```
 
 ---
