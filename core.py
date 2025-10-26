@@ -3,6 +3,8 @@ CONFIG_PATH = "config.txt"
 CONFIG_KEYS = [
     "discord_user_name",
     "discord_user_id",
+    "discord_guild_id",
+    "discord_voice_channel_id",
     "spotify_client_id",
     "spotify_client_secret",
     "node_url",
@@ -11,6 +13,8 @@ CONFIG_KEYS = [
 ]
 CONFIG_TEMPLATE = """discord_user_name=請填入你的discord名稱
 discord_user_id=請填入你的discord_id
+discord_guild_id=請填入你的伺服器ID(建議是單獨機器人的群組,機器人掛著使用)
+discord_voice_channel_id=請填入你的語音頻道ID(機器人掛著使用)
 spotify_client_id=請填入你的client_id
 spotify_client_secret=請填入你的client_secret
 node_url=請填入你的lavalink網址
@@ -138,8 +142,8 @@ class MusicClient(discord.Client):
         self.add_view(opselect_view())
         self.auto_update_status.start() 
         check_inactive_guilds.start()
-        guild = discord.utils.get(self.guilds, id=1287276156994981899)
-        voice_channel = discord.utils.get(guild.voice_channels, id=1287276156994981903)
+        guild = discord.utils.get(self.guilds, id=CONFIG_KEYS.index("discord_guild_id"))
+        voice_channel = discord.utils.get(guild.voice_channels, id=CONFIG_KEYS.index("discord_voice_channel_id"))
         await voice_channel.connect(cls=wavelink.Player)
 
 
