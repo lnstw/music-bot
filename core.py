@@ -145,11 +145,6 @@ class MusicClient(discord.Client):
 
 client = MusicClient()
 
-@tasks.loop(seconds=300)
-async def lavalink_keep_alive():
-    node = wavelink.NodePool.get_node()
-    await node.get_stats()
-
 @tasks.loop(minutes=30)
 async def check_inactive_guilds():
     current_time = datetime.datetime.now()
