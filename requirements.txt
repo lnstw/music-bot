@@ -7,3 +7,4 @@ wavelink
 spotipy
 requests
 Pillow
+python-dotenv
