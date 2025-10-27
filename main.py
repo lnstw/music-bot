@@ -17,7 +17,6 @@ from service.view import MusicControlView, QueuePaginator
 async def update_activity_time(guild_id: int):
     client.last_activity[guild_id] = datetime.datetime.now()
 
-
 @client.tree.command(name="play", description="播放音樂")
 async def play(interaction: discord.Interaction, query: str):
     await update_activity_time(interaction.guild_id)
@@ -149,17 +148,16 @@ async def play(interaction: discord.Interaction, query: str):
                             platform=platform
                         )
                         client.queues[guild_id].append(song)
-                        if not vc.playing:
-                            await play_next(guild=interaction.guild, vc=vc)
-
-                        song = client.current_songs.get(guild_id)
                         embed = create_song_embed(song, len(client.queues[guild_id]))
                         await interaction.followup.send(embed=embed)
-                        song = client.current_songs.get(guild_id)
-                        embed = create_music_embed(song, vc, guild_id)
-                        view = MusicControlView()
-                        message = await interaction.followup.send(embed=embed, view=view)
-                        await start_auto_update(guild_id, vc, message, view)
+                        if not vc.playing:
+                            await play_next(guild=interaction.guild, vc=vc)
+                            current_song = client.current_songs.get(guild_id)
+                            if current_song:
+                                embed = create_music_embed(current_song, vc, guild_id)
+                                view = MusicControlView()
+                                message = await interaction.followup.send(embed=embed, view=view)
+                                await start_auto_update(guild_id, vc, message, view)
                     else:
                         embed = discord.Embed(
                             title="❌ 無法找到歌曲",
