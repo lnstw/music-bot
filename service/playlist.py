@@ -89,7 +89,7 @@ async def send_playlist_results(interaction: discord.Interaction, added_songs: l
         if song and vc and vc.playing:
             embed2 = create_music_embed(song, vc, guild_id)
             view = MusicControlView()
-            message = await interaction.followup.send(embed=embed2, view=view)
+            message = await interaction.followup.send(embed=embed2, view=view,silent=True)
             await start_auto_update(guild_id, vc, message, view)
         else:
             print(f"[send_playlist_results] 無法取得目前歌曲或未在播放 (song={song}, vc.playing={vc.playing if vc else False})")
@@ -102,7 +102,7 @@ async def send_playlist_results(interaction: discord.Interaction, added_songs: l
             value=f"無法添加 {total_failed} 首歌曲 請到上則訊息查看",
             inline=False
         )
-        await interaction.followup.send(embed=embed)
+        await interaction.followup.send(embed=embed,silent=True)
         if total_failed > failed_per_page:
             for page in range(total_pages):
                 start_idx = page * failed_per_page
@@ -115,7 +115,7 @@ async def send_playlist_results(interaction: discord.Interaction, added_songs: l
                     ),
                     color=EMBED_COLORS['error']
                 )
-                await interaction.followup.send(embed=failed_embed)
+                await interaction.followup.send(embed=failed_embed,silent=True)
         elif failed_songs:
             failed_embed = discord.Embed(
                 title="❌ 處理失敗歌曲清單",

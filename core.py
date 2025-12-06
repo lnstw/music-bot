@@ -183,7 +183,7 @@ async def check_inactive_guilds():
                 client.show_now_song[guild_id] = True
             if guild_id in client.empty_channel_timers:
                 del client.empty_channel_timers[guild_id]
-            if guild_id in client.guild_volumes:  # 新增：重置音量
+            if guild_id in client.guild_volumes:
                 del client.guild_volumes[guild_id]
             if guild_id in client.last_activity:
                 del client.last_activity[guild_id]

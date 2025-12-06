@@ -74,7 +74,7 @@ class MusicControlView(discord.ui.View):
                 value=f"[{next_song.title}]({next_song.url})",
                 inline=False
             )
-        await interaction.followup.send(embed=embed)
+        await interaction.followup.send(embed=embed,silent=True)
         await vc.stop()
 
     async def play_pause(self, interaction: discord.Interaction):
@@ -107,7 +107,7 @@ class MusicControlView(discord.ui.View):
         updated_embed = create_music_embed(song, vc, guild_id)
         view = MusicControlView()
         await interaction.edit_original_response(embed=updated_embed, view=view)
-        await interaction.followup.send(embed=embed)
+        await interaction.followup.send(embed=embed,silent=True)
     
     async def toggle_loop(self, interaction: discord.Interaction):
         await interaction.response.defer()
@@ -128,7 +128,7 @@ class MusicControlView(discord.ui.View):
             description=f"循環模式已{status}",
             color=EMBED_COLORS['success']
         )
-        await interaction.followup.send(embed=embed)
+        await interaction.followup.send(embed=embed,silent=True)
 
     async def show_queue(self, interaction: discord.Interaction):
         try:
@@ -146,11 +146,11 @@ class MusicControlView(discord.ui.View):
                 status_parts.append("✨ 自動推薦：開啟")
             paginator = QueuePaginator(interaction, queue_list, songs_per_page=10, current_song=current_song, status_parts=status_parts)
             embed = paginator.get_embed()
-            await interaction.followup.send(f"{interaction.user.mention}", embed=embed, view=paginator)
+            await interaction.followup.send(f"{interaction.user.mention}", embed=embed, view=paginator,silent=True)
         except Exception as e:
             print(f"顯示播放清單時發生錯誤：{str(e)}")
             error_embed = create_error_embed(f"顯示播放清單時發生錯誤：{str(e)}")
-            await interaction.followup.send(embed=error_embed)
+            await interaction.followup.send(embed=error_embed,silent=True)
         
     async def shuffle_queue(self, interaction: discord.Interaction):
         await interaction.response.defer()
@@ -158,7 +158,7 @@ class MusicControlView(discord.ui.View):
             return
         guild_id = interaction.guild_id
         if guild_id not in client.queues or not client.queues[guild_id]:
-            await interaction.followup.send("❌ 播放清單是空的！")
+            await interaction.followup.send("❌ 播放清單是空的！",silent=True)
             return
         queue_list = list(client.queues[guild_id])
         if client.loop_mode.get(guild_id, False):
@@ -173,7 +173,7 @@ class MusicControlView(discord.ui.View):
             title="🔀 已打亂播放清單",
             color=EMBED_COLORS['success']
         )
-        await interaction.followup.send(embed=embed)
+        await interaction.followup.send(embed=embed,silent=True)
     
     async def Rewind(self, interaction: discord.Interaction):
         await interaction.response.defer()
@@ -198,7 +198,7 @@ class MusicControlView(discord.ui.View):
         updated_embed = create_music_embed(client, song, vc, guild_id)
         view = MusicControlView()
         await interaction.edit_original_response(embed=updated_embed, view=view)
-        await interaction.followup.send(embed=embed)
+        await interaction.followup.send(embed=embed,silent=True)
     
     async def forward(self, interaction: discord.Interaction):
         await interaction.response.defer()
@@ -225,7 +225,7 @@ class MusicControlView(discord.ui.View):
         updated_embed = create_music_embed(song, vc, guild_id)
         view = MusicControlView()
         await interaction.edit_original_response(embed=updated_embed, view=view)
-        await interaction.followup.send(embed=embed)
+        await interaction.followup.send(embed=embed,silent=True)
 
     async def increase_volume(self, interaction: discord.Interaction):
         await interaction.response.defer()
@@ -249,7 +249,7 @@ class MusicControlView(discord.ui.View):
         updated_embed = create_music_embed(song, vc, guild_id)
         view = MusicControlView()
         await interaction.edit_original_response(embed=updated_embed, view=view)
-        await interaction.followup.send(embed=embed)
+        await interaction.followup.send(embed=embed,silent=True)
     
     async def decrease_volume(self, interaction: discord.Interaction):
         await interaction.response.defer()
@@ -273,7 +273,7 @@ class MusicControlView(discord.ui.View):
         updated_embed = create_music_embed(song, vc, guild_id)
         view = MusicControlView()
         await interaction.edit_original_response(embed=updated_embed, view=view)
-        await interaction.followup.send(embed=embed)
+        await interaction.followup.send(embed=embed,silent=True)
 
     async def update_status(self, interaction: discord.Interaction):
         guild_id = interaction.guild_id
