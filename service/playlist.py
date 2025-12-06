@@ -86,10 +86,13 @@ async def send_playlist_results(interaction: discord.Interaction, added_songs: l
         guild_id = interaction.guild_id
         vc: wavelink.Player = interaction.guild.voice_client
         song = client.current_songs.get(guild_id)
-        embed2 = create_music_embed(song, vc, guild_id)
-        view = MusicControlView()
-        message = await interaction.followup.send(embed=embed2, view=view)
-        await start_auto_update(guild_id, vc, message, view)
+        if song and vc and vc.playing:
+            embed2 = create_music_embed(song, vc, guild_id)
+            view = MusicControlView()
+            message = await interaction.followup.send(embed=embed2, view=view)
+            await start_auto_update(guild_id, vc, message, view)
+        else:
+            print(f"[send_playlist_results] 無法取得目前歌曲或未在播放 (song={song}, vc.playing={vc.playing if vc else False})")
     if failed_songs:
         failed_per_page = 10
         total_failed = len(failed_songs)
@@ -133,7 +136,7 @@ async def process_playlist(
         guild_id = interaction.guild_id
         added_songs = []
         failed_songs = []
-
+        first_song_added = False
         progress_embed = discord.Embed(
             title="⏳ 正在處理播放清單",
             description=f"正在處理 {playlist_name}\n共 {len(search_queries)} 首歌曲",
@@ -144,6 +147,7 @@ async def process_playlist(
         platform = get_platform(original_url)
         queue_list = list(client.queues.get(guild_id, deque()))
         queries = reversed(search_queries) if insert_next else search_queries
+        vc: wavelink.Player = interaction.guild.voice_client
         for index, query in enumerate(queries):
             try:
                 tracks = await wavelink.Playable.search(query)
@@ -166,8 +170,14 @@ async def process_playlist(
                         queue_list.insert(insert_pos, song)
                     else:
                         queue_list.append(song)
-
                     added_songs.append(song)
+                    if not first_song_added and not vc.playing:
+                        client.queues[guild_id] = deque(queue_list)
+                        client.current_songs[guild_id] = song
+                        if vc.paused:
+                            await vc.pause(False)
+                        await play_next(guild=interaction.guild, vc=vc)
+                        first_song_added = True
                 else:
                     failed_songs.append(query)
             except Exception as e:
@@ -178,9 +188,6 @@ async def process_playlist(
                 await progress_message.edit(embed=progress_embed)
             await asyncio.sleep(0.1)
         client.queues[guild_id] = deque(queue_list)
-        vc: wavelink.Player = interaction.guild.voice_client
-        if added_songs and not vc.playing:
-            await play_next(guild=interaction.guild, vc=vc)
         if not added_songs:
             embed = discord.Embed(
                 title="⚠️ 播放失敗",
@@ -188,6 +195,7 @@ async def process_playlist(
                 color=EMBED_COLORS['error']
             )
             await interaction.followup.send(embed=embed)
+            return
         await send_playlist_results(interaction, added_songs, failed_songs, playlist_name)
     except Exception as e:
         print(f"[process_playlist] 播放清單處理錯誤：{str(e)}")
@@ -216,4 +224,3 @@ async def process_spotify_playlist(spotify_client, url: str) -> list[str]:
     except Exception as e:
         print(f"Spotify 播放清單處理錯誤: {e}")
         return []
-    
