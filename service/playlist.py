@@ -181,7 +181,7 @@ async def process_playlist(
         vc: wavelink.Player = interaction.guild.voice_client
         if added_songs and not vc.playing:
             await play_next(guild=interaction.guild, vc=vc)
-        else:
+        if not added_songs:
             embed = discord.Embed(
                 title="⚠️ 播放失敗",
                 description="播放清單可能無法播放任何歌曲",

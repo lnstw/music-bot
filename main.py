@@ -358,27 +358,35 @@ async def skip(interaction: discord.Interaction):
     await interaction.followup.send(embed=embed)
     await vc.stop()
 
-@client.tree.command(name="volume", description="調整音量")
-@app_commands.describe(volume="音量大小 (0-150)")
-async def volume(interaction: discord.Interaction, volume: int):
-    try:
-        await interaction.response.defer()
-        if not await check_voice_state_and_respond(interaction):
-            return
-        if not interaction.guild.voice_client:
-            await interaction.followup.send("❌ 機器人不在語音頻道中！")
-            return
-        if not 0 <= volume <= 150:
-            await interaction.followup.send("❌ 音量必須在 0-150 之間！")
-            return
-        client.default_volume = volume
-        vc: wavelink.Player = interaction.guild.voice_client
-        await vc.set_volume(volume)
-        await interaction.followup.send(f"🔊 音量已設定為 {volume}%")
-    except Exception as e:
-        print(f"調整音量時發生錯誤：{str(e)}")
-        error_embed = create_error_embed(f"調整音量時發生錯誤：{str(e)}")
-        await interaction.followup.send(embed=error_embed)
+@client.tree.command(name="volume", description="調整音量 (0-150)")
+async def volume(interaction: discord.Interaction, vol: int):
+    await interaction.response.defer()
+    guild_id = interaction.guild_id
+    vc: wavelink.Player = interaction.guild.voice_client
+    if not vc:
+        embed = discord.Embed(
+            title="❌ 機器人未在語音頻道",
+            description="請先使用 /play 播放音樂",
+            color=EMBED_COLORS['error']
+        )
+        await interaction.followup.send(embed=embed)
+        return
+    if vol < 0 or vol > 150:
+        embed = discord.Embed(
+            title="❌ 音量範圍錯誤",
+            description="音量必須在 0 到 150 之間",
+            color=EMBED_COLORS['error']
+        )
+        await interaction.followup.send(embed=embed)
+        return
+    await vc.set_volume(vol)
+    client.guild_volumes[guild_id] = vol
+    embed = discord.Embed(
+        title="🔊 音量已調整",
+        description=f"音量已設定為 {vol}",
+        color=EMBED_COLORS['success']
+    )
+    await interaction.followup.send(embed=embed)
 
 @client.tree.command(name="loop", description="切換循環播放模式")
 async def loop(interaction: discord.Interaction):

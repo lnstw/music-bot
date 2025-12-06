@@ -88,6 +88,7 @@ class MusicClient(discord.Client):
         self.show_now_song = {}
         self.empty_channel_timers = {}
         self.last_activity = {}
+        self.guild_volumes = {}
         self.default_volume = 10
         self.status_index = 0
         self.auto_update_tasks: dict[int, asyncio.Task] = {}
@@ -162,32 +163,31 @@ class MusicClient(discord.Client):
 
 client = MusicClient()
 
-@tasks.loop(minutes=30)
+@tasks.loop(minutes=1)
 async def check_inactive_guilds():
     current_time = datetime.datetime.now()
-    inactive_timeout = datetime.timedelta(hours=6)
+    inactive_timeout = datetime.timedelta(minutes=5)
     for guild_id in list(client.last_activity.keys()):
         guild = client.get_guild(guild_id)
         if guild and guild.voice_client and guild.voice_client.playing:
-            continue
+            continue     
         last_time = client.last_activity.get(guild_id)
         if last_time and (current_time - last_time) > inactive_timeout:
             if guild_id in client.queues:
                 client.queues[guild_id].clear()
             if guild_id in client.current_songs:
                 del client.current_songs[guild_id]
-            if guild_id in client.loop_mode:
-                client.loop_mode[guild_id] = False
-            if guild_id in client.auto_recommend:
-                client.auto_recommend[guild_id] = False
             if guild_id in client.force_stop:
                 client.force_stop[guild_id] = False
             if guild_id in client.show_now_song:
-                client.show_now_song[guild_id] = False
+                client.show_now_song[guild_id] = True
             if guild_id in client.empty_channel_timers:
                 del client.empty_channel_timers[guild_id]
-            del client.last_activity[guild_id]
-            print(f"已重置閒置伺服器 (ID: {guild_id}) 的狀態")
+            if guild_id in client.guild_volumes:  # 新增：重置音量
+                del client.guild_volumes[guild_id]
+            if guild_id in client.last_activity:
+                del client.last_activity[guild_id]
+            print(f"已重置閒置伺服器 (ID: {guild_id}) 的播放清單和當前歌曲")
 
 EMBED_COLORS = {
     'success': discord.Color.green(),
