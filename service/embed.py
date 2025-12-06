@@ -125,11 +125,30 @@ async def check_voice_state_and_respond(interaction: discord.Interaction) -> boo
 async def update_embed(target: discord.Message | discord.Interaction, embed: discord.Embed, view: discord.ui.View = None):
     try:
         if isinstance(target, discord.Message):
+            try:
+                await target.channel.fetch_message(target.id)
+            except discord.NotFound:
+                print(f"[update_embed] 訊息已被刪除 (ID: {target.id})")
+                return False
             await target.edit(embed=embed, view=view)
         elif isinstance(target, discord.Interaction):
             await target.edit_original_response(embed=embed, view=view)
+        return True
+    except discord.NotFound:
+        print(f"[update_embed] 訊息不存在")
+        return False
+    except discord.Forbidden:
+        print(f"[update_embed] 權限不足，無法編輯訊息")
+        return False
+    except discord.HTTPException as e:
+        if e.code == 50027:
+            print(f"[update_embed] Webhook Token 失效，停止更新")
+            return False
+        print(f"[update_embed] HTTP 錯誤：{e}")
+        return False
     except Exception as e:
-        print(f"[update_embed] 更新失敗：{e}")
+        print(f"[update_embed] 未預期的錯誤：{e}")
+        return False
 
 async def start_auto_update(
     guild_id: int,
@@ -140,33 +159,54 @@ async def start_auto_update(
     old_task = client.auto_update_tasks.get(guild_id)
     if old_task and not old_task.done():
         old_task.cancel()
-
     async def auto_update():
+        consecutive_errors = 0
+        max_consecutive_errors = 3
         try:
             while True:
-                await asyncio.sleep(20)
-
-                if not vc or not vc.playing:
-                    embed = discord.Embed(
-                        title="⚠️ 未在播放或播放完成",
-                        color=EMBED_COLORS['warning']
-                    )
-                    await update_embed(target, embed, view=None)
+                try:
+                    await asyncio.sleep(20)
+                    if not vc or not vc.playing:
+                        embed = discord.Embed(
+                            title="⚠️ 未在播放或播放完成",
+                            color=EMBED_COLORS['warning']
+                        )
+                        success = await update_embed(target, embed, view=None)
+                        break
+                    song = client.current_songs.get(guild_id)
+                    if not song:
+                        embed = discord.Embed(
+                            title="⚠️ 無法取得目前歌曲資訊",
+                            description="可能已停止播放或資料未同步",
+                            color=EMBED_COLORS['warning']
+                        )
+                        success = await update_embed(target, embed, view=None)
+                        break
+                    updated_embed = create_music_embed(song, vc, guild_id)
+                    success = await update_embed(target, updated_embed, view=view)
+                    if not success:
+                        consecutive_errors += 1
+                        if consecutive_errors >= max_consecutive_errors:
+                            print(f"[AutoUpdate] Guild {guild_id}: 連續更新失敗 {max_consecutive_errors} 次，停止更新")
+                            break
+                    else:
+                        consecutive_errors = 0
+                except asyncio.CancelledError:
+                    print(f"[AutoUpdate] Guild {guild_id}: 任務被取消")
                     break
-
-                song = client.current_songs.get(guild_id)
-                if not song:
-                    embed = discord.Embed(
-                        title="⚠️ 無法取得目前歌曲資訊",
-                        description="可能已停止播放或資料未同步",
-                        color=EMBED_COLORS['warning']
-                    )
-                    await update_embed(target, embed, view=None)
-                    break
-
-                updated_embed = create_music_embed(song, vc, guild_id)
-                await update_embed(target, updated_embed, view=view)
+                except Exception as e:
+                    consecutive_errors += 1
+                    print(f"[AutoUpdate] Guild {guild_id}: 更新迴圈錯誤 ({consecutive_errors}/{max_consecutive_errors})：{e}")
+                    
+                    if consecutive_errors >= max_consecutive_errors:
+                        print(f"[AutoUpdate] Guild {guild_id}: 達到最大錯誤次數，停止更新")
+                        break
+                    await asyncio.sleep(5)              
         except Exception as e:
-            print(f"[AutoUpdate] 發生錯誤：{e}")
-
-    client.auto_update_tasks[guild_id] = asyncio.create_task(auto_update())
+            print(f"[AutoUpdate] Guild {guild_id}: 致命錯誤：{e}")
+        finally:
+            if guild_id in client.auto_update_tasks:
+                del client.auto_update_tasks[guild_id]
+            print(f"[AutoUpdate] Guild {guild_id}: 自動更新任務結束")
+    task = asyncio.create_task(auto_update())
+    client.auto_update_tasks[guild_id] = task
