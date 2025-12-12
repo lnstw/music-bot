@@ -290,6 +290,28 @@ class MusicControlView(discord.ui.View):
         await interaction.edit_original_response(embed=embed, view=view)
         await start_auto_update(guild_id, vc, interaction, view) 
 
+    async def on_error(self, interaction: discord.Interaction, error: Exception, item: discord.ui.Item) -> None:
+        embed = discord.Embed(
+            title="⚠️ 按鈕已失效",
+            description="此互動已失敗或已過期，請重新使用 /musiccontrol 取得新的控制面板。",
+            color=EMBED_COLORS["warning"]
+        )
+        try:
+            if not interaction.response.is_done():
+                await interaction.response.edit_message(embed=embed, view=None)
+            else:
+                await interaction.edit_original_response(embed=embed, view=None)
+        except Exception:
+            if interaction.message:
+                await interaction.message.edit(embed=embed, view=None)
+
+    async def on_timeout(self) -> None:
+        if hasattr(self, "message") and self.message:
+            try:
+                await self.message.edit(view=None)
+            except Exception:
+                pass
+
 class QueuePaginator(View):
     def __init__(self, interaction, queue_list, songs_per_page=10, current_song=None, status_parts=None):
         super().__init__(timeout=60)
