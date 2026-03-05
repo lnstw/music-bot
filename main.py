@@ -8,7 +8,7 @@ from io import BytesIO
 import datetime
 from datetime import timedelta
 import aiohttp
-from core import client, config, Song, EMBED_COLORS, RefreshButton, opselect_view, config, get_dominant_color
+from core import client, config, Song, EMBED_COLORS, RefreshButton, opselect_view, config, get_dominant_color, LavalinkPlayerCompat
 from service.play import play_next
 from service.embed import create_song_embed, create_error_embed, check_voice_state_and_respond, create_music_embed, start_auto_update
 from service.channel import send_message_to_last_channel
@@ -58,7 +58,7 @@ async def play(interaction: discord.Interaction, query: str):
                     return
                 if not interaction.guild.voice_client:
                     try:
-                        vc: wavelink.Player = await interaction.user.voice.channel.connect(cls=wavelink.Player)
+                        vc: wavelink.Player = await interaction.user.voice.channel.connect(cls=LavalinkPlayerCompat)
                     except Exception as e:
                         error_embed = create_error_embed(f"無法連接語音頻道：{str(e)}")
                         await interaction.followup.send(embed=error_embed)
@@ -123,7 +123,7 @@ async def play(interaction: discord.Interaction, query: str):
                     return
                 if not interaction.guild.voice_client:
                     try:
-                        vc: wavelink.Player = await interaction.user.voice.channel.connect(cls=wavelink.Player)
+                        vc: wavelink.Player = await interaction.user.voice.channel.connect(cls=LavalinkPlayerCompat)
                     except Exception as e:
                         error_embed = create_error_embed(f"無法連接語音頻道：{str(e)}")
                         await interaction.followup.send(embed=error_embed)
@@ -616,7 +616,7 @@ async def reload(interaction: discord.Interaction):
             except Exception as e:
                 print(f"斷開連接時發生錯誤：{e}")
         try:
-            vc: wavelink.Player = await current_channel.connect(cls=wavelink.Player)
+            vc: wavelink.Player = await current_channel.connect(cls=LavalinkPlayerCompat)
             await vc.set_volume(volume)
             if current_queue:
                 client.queues[guild_id] = deque(current_queue)
@@ -791,7 +791,7 @@ async def playnext(interaction: discord.Interaction, query: str):
             return
         if not interaction.guild.voice_client:
             try:
-                vc: wavelink.Player = await interaction.user.voice.channel.connect(cls=wavelink.Player)
+                vc: wavelink.Player = await interaction.user.voice.channel.connect(cls=LavalinkPlayerCompat)
                 await vc.set_volume(client.default_volume)
             except Exception as e:
                 error_embed = create_error_embed(f"無法連接語音頻道：{str(e)}")
