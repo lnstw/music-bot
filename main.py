@@ -804,7 +804,6 @@ async def playnext(interaction: discord.Interaction, query: str):
             client.queues[guild_id] = deque()
         client.last_channels[guild_id] = interaction.channel_id
 
-        # 🔍 判斷是否為播放清單
         is_playlist = False
         if 'spotify.com' in query:
             if 'playlist' in query or 'album' in query:

@@ -155,6 +155,7 @@ class MusicClient(discord.Client):
             client_id=config["spotify_client_id"],
             client_secret=config["spotify_client_secret"],
         ))
+        self.lavalink_heartbeats: dict[int, float] = {}
     def generate_status_list(self) -> list[str]:
         guild_count = len(self.guilds)
         user_count = sum(g.member_count or 0 for g in self.guilds)
@@ -213,15 +214,12 @@ class MusicClient(discord.Client):
         print("Done!")
         self.add_view(RefreshButton())
         self.add_view(opselect_view())
-        self.auto_update_status.start() 
-        check_inactive_guilds.start()
-        guild = discord.utils.get(self.guilds, id=int(config["discord_guild_id"]))
-        voice_channel = discord.utils.get(guild.voice_channels, id=int(config["discord_voice_channel_id"]))
-        if voice_channel and not guild.voice_client:
-            try:
-                await voice_channel.connect(cls=LavalinkPlayerCompat)
-            except Exception as e:
-                print(f"自動連接語音頻道失敗：{e}")
+        if not self.auto_update_status.is_running():
+            self.auto_update_status.start() 
+        if not check_inactive_guilds.is_running():
+            check_inactive_guilds.start()
+        if not lavalink_heartbeat.is_running():
+            lavalink_heartbeat.start()
 
 
 client = MusicClient()
@@ -251,6 +249,43 @@ async def check_inactive_guilds():
             if guild_id in client.last_activity:
                 del client.last_activity[guild_id]
             print(f"已重置閒置伺服器 (ID: {guild_id}) 的播放清單和當前歌曲")
+
+@tasks.loop(seconds=30)
+async def lavalink_heartbeat():
+    """保持 Lavalink 連接活躍，防止長時間不活動導致超時"""
+    try:
+        nodes = wavelink.Pool.nodes
+        if not nodes:
+            return
+        
+        for node in nodes:
+            try:
+                if node.status == wavelink.NodeStatus.CONNECTED:
+                    await node.fetch_all_players()
+                    client.lavalink_heartbeats[id(node)] = datetime.datetime.now().timestamp()
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+@lavalink_heartbeat.before_loop
+async def before_lavalink_heartbeat():
+    await client.wait_until_ready()
+
+@client.event
+async def on_wavelink_node_ready(payload):
+    print("Lavalink 節點已準備就緒")
+
+@client.event
+async def on_wavelink_node_closed(payload):
+    print("警告：Lavalink 節點已斷開連接")
+
+@client.event
+async def on_wavelink_player_stop(player: wavelink.Player):
+    try:
+        await client.update_presence()
+    except Exception:
+        pass
 
 EMBED_COLORS = {
     'success': discord.Color.green(),
