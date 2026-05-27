@@ -1,0 +1,10 @@
+discord.py
+wavelink
+spotipy
+requests
+git+https://github.com/Rapptz/discord.py
+wavelink
+spotipy
+requests
+Pillow
+python-dotenv
