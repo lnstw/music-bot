@@ -42,27 +42,6 @@ node_url=請填入你的lavalink網址
 node_pw=請填入你的lavalink密碼
 discord_bot_token=請填入你的discord token
 ```
-
----
-
-## 📜 常用指令（斜線命令）
-- /play <query> — 播放（支援 YouTube、Spotify、Apple）  
-- /playnext <query> — 插播為下一首  
-- /pause — 暫停  
-- /resume — 繼續  
-- /skip — 跳過  
-- /stop — 停止並清空清單  
-- /queue — 顯示播放清單  
-- /shuffle — 打亂清單  
-- /loop — 切換循環模式  
-- /autorecommend — 自動推薦開關  
-- /np — 顯示目前播放歌曲  
-- /volume <0-150> — 調整音量  
-- /nowplaymsg — 開關播放前提示訊息  
-- /隨機圖 — 取得一張隨機圖片（有重新取得按鈕）  
-- /leave — 讓機器人離開語音頻道  
-- /reload — 重連並嘗試恢復播放狀態
-
 ---
 
 ## 🔧 進階功能
