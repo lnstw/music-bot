@@ -1,11 +1,15 @@
 import discord
-from core import client
+
+_client = None
+def set_client_ref(client):
+    global _client
+    _client = client
 
 async def send_message_to_last_channel(guild_id: int, message: str = None, embed: discord.Embed = None):
-    if guild_id in client.last_channels:
-        guild = client.get_guild(guild_id)
+    if guild_id in _client.last_channels:
+        guild = _client.get_guild(guild_id)
         if guild:
-            channel = guild.get_channel(client.last_channels[guild_id])
+            channel = guild.get_channel(_client.last_channels[guild_id])
             if channel:
                 try:
                     if embed:

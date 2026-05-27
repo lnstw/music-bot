@@ -2,11 +2,24 @@ import discord, random
 from typing import Optional
 import wavelink
 from collections import deque
-from core import client, EMBED_COLORS, Song
-from service.embed import create_now_playing_embed, create_error_embed
+from service.embed import create_now_playing_embed, create_error_embed, EMBED_COLORS
 from service.channel import send_message_to_last_channel
+import datetime
+from datetime import timedelta
 
-async def play_next(guild: discord.Guild, vc: wavelink.Player):
+class Song:
+    def __init__(self, url: str, title: str, duration: int, thumbnail: str, requester: discord.Member, platform: str):
+        self.url = url
+        self.title = title
+        self.duration = duration
+        self.thumbnail = thumbnail
+        self.requester = requester
+        self.platform = platform.lower()
+
+async def update_activity_time(guild_id: int, client):
+    client.last_activity[guild_id] = datetime.datetime.now()
+
+async def play_next(guild: discord.Guild, vc: wavelink.Player, client):
     guild_id = guild.id
     if client.force_stop.get(guild_id, False):
         await client.update_presence()
@@ -25,7 +38,7 @@ async def play_next(guild: discord.Guild, vc: wavelink.Player):
             elif (guild_id in client.auto_recommend and 
                   client.auto_recommend[guild_id] and 
                   guild_id in client.current_songs):
-                recommended_song = await get_next_recommendation(guild_id)
+                recommended_song = await get_next_recommendation(guild_id, client)
                 if recommended_song:
                     client.queues[guild_id].append(recommended_song)
         if client.queues[guild_id]:
@@ -59,7 +72,7 @@ async def play_next(guild: discord.Guild, vc: wavelink.Player):
                         await send_message_to_last_channel(guild_id=guild_id, embed=embed)
             except Exception as e:
                 print(f"播放歌曲時發生錯誤: {e}")
-                await play_next(guild=guild, vc=vc)
+                await play_next(guild=guild, vc=vc, client=client)
         else:
             await client.update_presence()
             embed = discord.Embed(
@@ -73,7 +86,7 @@ async def play_next(guild: discord.Guild, vc: wavelink.Player):
         error_embed = create_error_embed(f"播放時發生錯誤：{str(e)}")
         await send_message_to_last_channel(guild_id=guild_id, embed=error_embed)
 
-async def get_next_recommendation(guild_id: int) -> Optional[Song]:
+async def get_next_recommendation(guild_id: int, client) -> Optional[Song]:
     try:
         if guild_id in client.current_songs:
             current_song = client.current_songs[guild_id]

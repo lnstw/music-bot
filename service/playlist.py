@@ -4,10 +4,14 @@ from typing import Optional
 from urllib.parse import urlparse
 import wavelink
 from collections import deque
-from core import client, EMBED_COLORS, Song
-from service.embed import create_error_embed, create_music_embed, start_auto_update
-from service.play import play_next
+from service.embed import create_error_embed, create_music_embed, start_auto_update, EMBED_COLORS
+from service.play import play_next, Song
 from service.view import MusicControlView
+
+_client = None
+def set_client_ref(client):
+    global _client
+    _client = client
 
 async def process_spotify_track(spotify_client, url: str) -> Optional[str]:
     try:
@@ -85,11 +89,10 @@ async def send_playlist_results(interaction: discord.Interaction, added_songs: l
 
         guild_id = interaction.guild_id
         vc: wavelink.Player = interaction.guild.voice_client
-        song = client.current_songs.get(guild_id)
+        song = _client.current_songs.get(guild_id) if _client else None
         if song and vc and vc.playing:
-            embed2 = create_music_embed(song, vc, guild_id)
-            view = MusicControlView()
-            message = await interaction.followup.send(embed=embed2, view=view,silent=True)
+            view = MusicControlView(song, vc, guild_id, _client)
+            message = await interaction.followup.send(embed=None, view=view,silent=True)
             await start_auto_update(guild_id, vc, message, view)
         else:
             print(f"[send_playlist_results] 無法取得目前歌曲或未在播放 (song={song}, vc.playing={vc.playing if vc else False})")
@@ -145,7 +148,7 @@ async def process_playlist(
         progress_message = await interaction.followup.send(embed=progress_embed)
         original_url = search_queries[0] if search_queries else ""
         platform = get_platform(original_url)
-        queue_list = list(client.queues.get(guild_id, deque()))
+        queue_list = list(_client.queues.get(guild_id, deque()) if _client else deque())
         queries = reversed(search_queries) if insert_next else search_queries
         vc: wavelink.Player = interaction.guild.voice_client
         for index, query in enumerate(queries):
@@ -162,8 +165,8 @@ async def process_playlist(
                         platform=platform
                     )
                     if insert_next:
-                        if client.loop_mode.get(guild_id, False):
-                            current_song = client.current_songs.get(guild_id)
+                        if _client and _client.loop_mode.get(guild_id, False):
+                            current_song = _client.current_songs.get(guild_id)
                             insert_pos = queue_list.index(current_song) + 1 if current_song in queue_list else 0
                         else:
                             insert_pos = 0
@@ -172,11 +175,12 @@ async def process_playlist(
                         queue_list.append(song)
                     added_songs.append(song)
                     if not first_song_added and not vc.playing:
-                        client.queues[guild_id] = deque(queue_list)
-                        client.current_songs[guild_id] = song
+                        if _client:
+                            _client.queues[guild_id] = deque(queue_list)
+                            _client.current_songs[guild_id] = song
                         if vc.paused:
                             await vc.pause(False)
-                        await play_next(guild=interaction.guild, vc=vc)
+                        await play_next(guild=interaction.guild, vc=vc, client=_client)
                         first_song_added = True
                 else:
                     failed_songs.append(query)
@@ -187,7 +191,7 @@ async def process_playlist(
                 progress_embed.description = f"正在處理 {playlist_name}\n已完成 {index + 1}/{len(search_queries)} 首歌曲"
                 await progress_message.edit(embed=progress_embed)
             await asyncio.sleep(0.1)
-        client.queues[guild_id] = deque(queue_list)
+        _client.queues[guild_id] = deque(queue_list)
         if not added_songs:
             embed = discord.Embed(
                 title="⚠️ 播放失敗",

@@ -1,1 +1,3 @@
-print("Service 載入")
+import logging
+logging.basicConfig(level=logging.INFO)
+logging.info("Service 載入")
