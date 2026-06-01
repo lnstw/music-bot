@@ -1,14 +1,14 @@
 import discord
 from discord import app_commands
 from discord.ext import commands
-from service.embed import EMBED_COLORS
+from core.embed import EMBED_COLORS
 import aiohttp
 import datetime
 from datetime import timedelta
 from io import BytesIO
 import asyncio
 
-from service.view import get_dominant_color, RefreshButton
+from core.view import get_dominant_color, RefreshButton
 
 class Redgay(commands.Cog):
     def __init__(self, bot):

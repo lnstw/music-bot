@@ -2,11 +2,15 @@ import asyncio
 import discord
 from typing import Optional
 from urllib.parse import urlparse
-import wavelink
+import lava_lyra
+import logging
 from collections import deque
-from service.embed import create_error_embed, create_music_embed, start_auto_update, EMBED_COLORS
-from service.play import play_next, Song
-from service.view import MusicControlView
+from core.embed import create_error_embed, EMBED_COLORS
+from core.view import MusicControlView
+from core.player import CustomPlayer
+import logging
+from core.log import setup_logging
+setup_logging()
 
 _client = None
 def set_client_ref(client):
@@ -21,7 +25,7 @@ async def process_spotify_track(spotify_client, url: str) -> Optional[str]:
         track_name = track['name']
         return f"{track_name} {artist_name} audio"
     except Exception as e:
-        print(f"Spotify 處理錯誤: {e}")
+        logging.error(f"Spotify 處理錯誤: {e}")
         return None
     
 def get_platform(url: str) -> str:
@@ -48,57 +52,58 @@ async def process_spotify_album(spotify_client, url: str) -> list[str]:
                 tracks.append(search_query)
         return tracks
     except Exception as e:
-        print(f"Spotify 專輯處理錯誤: {e}")
+        logging.error(f"Spotify 專輯處理錯誤: {e}")
         return []
     
-async def process_youtube_playlist(url: str) -> list[str]:
+async def process_youtube_playlist(player: CustomPlayer, url: str) -> list[str]:
     try:
         if 'list=' not in url:
             return []
         playlist_id = url.split('list=')[1].split('&')[0]
         playlist_url = f"https://youtube.com/playlist?list={playlist_id}"
         try:
-            playlist = await wavelink.Playable.search(playlist_url)
-            if isinstance(playlist, wavelink.Playlist):
+            playlist = await player.get_tracks(playlist_url)
+            if isinstance(playlist, lava_lyra.Playlist):
                 return [track.uri for track in playlist.tracks]
             return [track.uri for track in playlist if hasattr(track, 'uri')]
         except Exception as e:
-            print(f"播放清單搜尋錯誤: {e}")
+            logging.error(f"播放清單搜尋錯誤: {e}")
             return []
     except Exception as e:
-        print(f"YouTube 播放清單處理錯誤: {e}")
+        logging.error(f"YouTube 播放清單處理錯誤: {e}")
         return []
 
-async def send_playlist_results(interaction: discord.Interaction, added_songs: list, failed_songs: list, playlist_name: str):
+async def send_playlist_results(interaction: discord.Interaction, added_tracklist: list[lava_lyra.Track], failed_tracklist: list, playlist_name: str):
     embed = discord.Embed(
         title=f"✅ {playlist_name} 處理完成",
         color=EMBED_COLORS['success']
     )
-    if added_songs:
-        total_duration = sum(song.duration for song in added_songs)
-        minutes = total_duration // 60
-        hours = minutes // 60
-        minutes %= 60
+    if added_tracklist:
+        total_duration_ms = sum(track.length for track in added_tracklist)
+        total_duration = int(total_duration_ms / 1000)
+        hours = total_duration // 3600
+        minutes = (total_duration % 3600) // 60
         duration_text = f"{hours}小時{minutes}分鐘" if hours > 0 else f"{minutes}分鐘"
         embed.add_field(
             name="✅ 已添加歌曲",
-            value=f"成功添加 {len(added_songs)} 首歌曲\n總時長：{duration_text}",
+            value=f"成功添加 {len(added_tracklist)} 首歌曲\n總時長：{duration_text}",
             inline=False
         )
         await interaction.edit_original_response(embed=embed)
 
         guild_id = interaction.guild_id
-        vc: wavelink.Player = interaction.guild.voice_client
-        song = _client.current_songs.get(guild_id) if _client else None
-        if song and vc and vc.playing:
-            view = MusicControlView(song, vc, guild_id, _client)
-            message = await interaction.followup.send(embed=None, view=view,silent=True)
-            await start_auto_update(guild_id, vc, message, view)
+        vc: CustomPlayer = interaction.guild.voice_client
+        track = vc.current
+        if track and vc and vc.is_playing:
+            view = MusicControlView(track, vc)
+            message = await interaction.followup.send(view=view, silent=True)
+            from core.embed import start_auto_update
+            await start_auto_update(interaction.guild_id, vc, message)
         else:
-            print(f"[send_playlist_results] 無法取得目前歌曲或未在播放 (song={song}, vc.playing={vc.playing if vc else False})")
-    if failed_songs:
+            logging.error(f"[send_playlist_results] 無法取得目前歌曲或未在播放 (song={track}, vc.playing={vc.is_playing if vc else False})")
+    if failed_tracklist:
         failed_per_page = 10
-        total_failed = len(failed_songs)
+        total_failed = len(failed_tracklist)
         total_pages = (total_failed + failed_per_page - 1) // failed_per_page
         embed.add_field(
             name="❌ 處理失敗",
@@ -114,15 +119,15 @@ async def send_playlist_results(interaction: discord.Interaction, added_songs: l
                     title=f"❌ 處理失敗歌曲清單 ({page+1}/{total_pages})",
                     description="\n".join(
                         f"{i+1}. {song}" 
-                        for i, song in enumerate(failed_songs[start_idx:end_idx], start=start_idx)
+                        for i, song in enumerate(failed_tracklist[start_idx:end_idx], start=start_idx)
                     ),
                     color=EMBED_COLORS['error']
                 )
                 await interaction.followup.send(embed=failed_embed,silent=True)
-        elif failed_songs:
+        elif failed_tracklist:
             failed_embed = discord.Embed(
                 title="❌ 處理失敗歌曲清單",
-                description="\n".join(f"{i+1}. {song}" for i, song in enumerate(failed_songs)),
+                description="\n".join(f"{i+1}. {song}" for i, song in enumerate(failed_tracklist)),
                 color=EMBED_COLORS['error']
             )
             await interaction.edit_original_response(embed=failed_embed)
@@ -148,50 +153,57 @@ async def process_playlist(
         progress_message = await interaction.followup.send(embed=progress_embed)
         original_url = search_queries[0] if search_queries else ""
         platform = get_platform(original_url)
-        queue_list = list(_client.queues.get(guild_id, deque()) if _client else deque())
         queries = reversed(search_queries) if insert_next else search_queries
-        vc: wavelink.Player = interaction.guild.voice_client
+        player: CustomPlayer = interaction.guild.voice_client
+        queue_list = player.queue.get_queue()
         for index, query in enumerate(queries):
             try:
-                tracks = await wavelink.Playable.search(query)
+                tracks = await player.get_tracks(query)
                 if tracks and tracks[0] is not None:
                     track = tracks[0]
-                    song = Song(
-                        url=track.uri,
-                        title=track.title,
-                        duration=int(track.length // 1000),
-                        thumbnail=track.artwork,
-                        requester=interaction.user,
-                        platform=platform
-                    )
                     if insert_next:
-                        if _client and _client.loop_mode.get(guild_id, False):
-                            current_song = _client.current_songs.get(guild_id)
+                        if player and player.queue.is_looping:
+                            current_song = player.current
                             insert_pos = queue_list.index(current_song) + 1 if current_song in queue_list else 0
                         else:
                             insert_pos = 0
-                        queue_list.insert(insert_pos, song)
+                        player.queue.put_at_index(insert_pos, track)
                     else:
-                        queue_list.append(song)
-                    added_songs.append(song)
-                    if not first_song_added and not vc.playing:
-                        if _client:
-                            _client.queues[guild_id] = deque(queue_list)
-                            _client.current_songs[guild_id] = song
-                        if vc.paused:
-                            await vc.pause(False)
-                        await play_next(guild=interaction.guild, vc=vc, client=_client)
+                        player.queue.put(track)
+                    added_songs.append(track)
+                    if not first_song_added and not player.is_playing:
+                        if player:
+                            player.queue.extend(queue_list)
+                            # 初始化音量（在播放第一首歌曲前）
+                            await player.initialize_volume()
+                        if player.is_paused:
+                            await player.set_pause(False)
+                        await player.play_next()
                         first_song_added = True
                 else:
                     failed_songs.append(query)
             except Exception as e:
-                print(f"[process_playlist] 處理歌曲時發生錯誤：{str(e)}")
+                logging.error(f"[process_playlist] 處理歌曲時發生錯誤：{str(e)}")
                 failed_songs.append(query)
             if (index + 1) % 20 == 0 or index == len(search_queries) - 1:
                 progress_embed.description = f"正在處理 {playlist_name}\n已完成 {index + 1}/{len(search_queries)} 首歌曲"
                 await progress_message.edit(embed=progress_embed)
             await asyncio.sleep(0.1)
-        _client.queues[guild_id] = deque(queue_list)
+        
+        # 為所有添加的歌曲設定請求者
+        for track in added_songs:
+            track.requester = interaction.user
+        
+        # 移除隊列中的第一首歌曲（因為已經在播放）
+        if added_songs and player.queue:
+            first_track = added_songs[0]
+            queue_list = player.queue.get_queue()
+            if first_track in queue_list:
+                queue_list.remove(first_track)
+                player.queue.clear()
+                for track in queue_list:
+                    player.queue.put(track)
+        
         if not added_songs:
             embed = discord.Embed(
                 title="⚠️ 播放失敗",
@@ -202,7 +214,7 @@ async def process_playlist(
             return
         await send_playlist_results(interaction, added_songs, failed_songs, playlist_name)
     except Exception as e:
-        print(f"[process_playlist] 播放清單處理錯誤：{str(e)}")
+        logging.error(f"[process_playlist] 播放清單處理錯誤：{str(e)}")
         error_embed = create_error_embed(f"處理播放清單時發生錯誤：{str(e)}")
         await interaction.followup.send(embed=error_embed)
 
@@ -226,5 +238,5 @@ async def process_spotify_playlist(spotify_client, url: str) -> list[str]:
                 break
         return tracks
     except Exception as e:
-        print(f"Spotify 播放清單處理錯誤: {e}")
+        logging.error(f"Spotify 播放清單處理錯誤: {e}")
         return []

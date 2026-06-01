@@ -1,14 +1,18 @@
 import discord
 from discord import app_commands
 from discord.ext import commands
-import wavelink
+import lava_lyra
 from collections import deque
 
-from service.play import play_next, update_activity_time, Song  
-from service.playlist import process_playlist, process_spotify_track, process_spotify_album, get_platform, process_spotify_playlist, process_youtube_playlist
-from service.embed import check_voice_state_and_respond, create_song_embed, create_music_embed, create_error_embed, start_auto_update, EMBED_COLORS
-from service.Lavalink import LavalinkPlayerCompat
-from service.view import MusicControlView
+from core.playlist import process_playlist, process_spotify_track, process_spotify_album, get_platform, process_spotify_playlist, process_youtube_playlist
+from core.embed import check_voice_state_and_respond, create_song_embed, create_error_embed, EMBED_COLORS, start_auto_update
+from core.view import MusicControlView
+from core.player import CustomPlayer
+from core.config import spotify
+from core.config import config, spotify
+import logging
+from core.log import setup_logging
+setup_logging()
 
 
 class Musicplay(commands.Cog):
@@ -23,9 +27,7 @@ class Musicplay(commands.Cog):
     @py.command(name="播放", description="播放音樂")
     async def play(self, interaction: discord.Interaction, query: str):
         client = self.get_client()
-        await update_activity_time(interaction.guild_id, client)
         guild_id = interaction.guild_id
-        client.force_stop[guild_id] = False
         try:
             await interaction.response.defer()
             if not await check_voice_state_and_respond(interaction):
@@ -46,9 +48,9 @@ class Musicplay(commands.Cog):
                 try:
                     if platform == 'spotify':
                         if 'playlist' in query.lower():
-                            search_queries = await process_spotify_playlist(client.spotify, query)
+                            search_queries = await process_spotify_playlist(spotify, query)
                         elif 'album' in query.lower():
-                            search_queries = await process_spotify_album(client.spotify, query)
+                            search_queries = await process_spotify_album(spotify, query)
                     elif platform == 'youtube':
                         if 'list=' in query:
                             search_queries = await process_youtube_playlist(query)
@@ -62,21 +64,18 @@ class Musicplay(commands.Cog):
                         return
                     if not interaction.guild.voice_client:
                         try:
-                            vc: wavelink.Player = await interaction.user.voice.channel.connect(cls=LavalinkPlayerCompat)
+                            player: CustomPlayer = await interaction.user.voice.channel.connect(cls=CustomPlayer)
                         except Exception as e:
                             error_embed = create_error_embed(f"無法連接語音頻道：{str(e)}")
                             await interaction.followup.send(embed=error_embed)
                             return
                     else:
-                        vc: wavelink.Player = interaction.guild.voice_client
-                    await vc.set_volume(client.default_volume)
-                    if guild_id not in client.queues:
-                        client.queues[guild_id] = deque()
-                    client.last_channels[guild_id] = interaction.channel_id
+                        player: CustomPlayer = interaction.guild.voice_client
+                    player._last_channel = interaction.channel
                     await process_playlist(interaction=interaction, search_queries=search_queries, playlist_name="播放清單")
                 except Exception as e:
-                    print(f"處理播放清單時發生錯誤: {e}")
-                    error_embed = create_error_embed(f"處理播放清單時發生錯誤：{str(e)}", client.config)
+                    logging.error(f"處理播放清單時發生錯誤: {e}")
+                    error_embed = create_error_embed(f"處理播放清單時發生錯誤：{str(e)}", config)
                     await interaction.followup.send(embed=error_embed)
                     return
             else:
@@ -94,11 +93,11 @@ class Musicplay(commands.Cog):
                     try:
                         if platform == 'spotify':
                             if 'playlist' in query.lower():
-                                search_queries = await process_spotify_playlist(client.spotify, query)
+                                search_queries = await process_spotify_playlist(spotify, query)
                             elif 'album' in query.lower():
-                                search_queries = await process_spotify_album(client.spotify, query)
+                                search_queries = await process_spotify_album(spotify, query)
                             else:
-                                search_query = await process_spotify_track(client.spotify, query)
+                                search_query = await process_spotify_track(spotify, query)
                                 if search_query:
                                     search_queries = [search_query]
                         elif platform == 'youtube':
@@ -117,7 +116,7 @@ class Musicplay(commands.Cog):
                             await interaction.followup.send(embed=embed)
                             return
                     except Exception as e:
-                        print(f"URL 處理錯誤: {e}")
+                        logging.error(f"URL 處理錯誤: {e}")
                         embed = discord.Embed(
                             title="❌ 無法處理連結",
                             description="處理連結時發生錯誤，請嘗試其他連結或直接搜尋歌名",
@@ -127,40 +126,30 @@ class Musicplay(commands.Cog):
                         return
                     if not interaction.guild.voice_client:
                         try:
-                            vc: wavelink.Player = await interaction.user.voice.channel.connect(cls=LavalinkPlayerCompat)
+                            player: CustomPlayer = await interaction.user.voice.channel.connect(cls=CustomPlayer)
                         except Exception as e:
                             error_embed = create_error_embed(f"無法連接語音頻道：{str(e)}")
                             await interaction.followup.send(embed=error_embed)
                             return
                     else:
-                        vc: wavelink.Player = interaction.guild.voice_client
-                    await vc.set_volume(client.default_volume)
-                    guild_id = interaction.guild_id
-                    if guild_id not in client.queues:
-                        client.queues[guild_id] = deque()
-                    client.last_channels[guild_id] = interaction.channel_id
+                        player: CustomPlayer = interaction.guild.voice_client
+                    player._last_channel = interaction.channel
+                    await player.initialize_volume()
                     try:
-                        tracks = await wavelink.Playable.search(search_queries[0])
+                        tracks = await player.get_tracks(search_queries[0])
                         if tracks:
                             track = tracks[0]
-                            song = Song(
-                                url=track.uri,
-                                title=track.title,
-                                duration=int(track.length // 1000),
-                                thumbnail=track.artwork,
-                                requester=interaction.user,
-                                platform=platform
-                            )
-                            client.queues[guild_id].append(song)
-                            embed = create_song_embed(song, len(client.queues[guild_id]))
+                            track.requester = interaction.user
+                            player.queue.put(track)
+                            embed = create_song_embed(track, player.queue.count)
                             await interaction.followup.send(embed=embed)
-                            if not vc.playing:
-                                await play_next(guild=interaction.guild, vc=vc, client=client)
-                                current_song = client.current_songs.get(guild_id)
+                            if not player.is_playing:
+                                await player.play_next()
+                                current_song = player.current
                                 if current_song:
-                                    view = MusicControlView(current_song, vc, guild_id, client)
-                                    message = await interaction.followup.send(embed=None, view=view)
-                                    await start_auto_update(guild_id, vc, message, view)
+                                    view = MusicControlView(current_song, player)
+                                    message = await interaction.followup.send(view=view)
+                                    await start_auto_update(interaction.guild_id, player, message)
                         else:
                             embed = discord.Embed(
                                 title="❌ 無法找到歌曲",
@@ -169,15 +158,15 @@ class Musicplay(commands.Cog):
                             )
                             await interaction.followup.send(embed=embed)
                     except Exception as e:
-                        print(f"播放歌曲時發生錯誤：{str(e)}")
+                        logging.error(f"播放歌曲時發生錯誤：{str(e)}")
                         error_embed = create_error_embed(f"播放歌曲時發生錯誤：{str(e)}")
                         await interaction.followup.send(embed=error_embed)
                 except Exception as e:
-                    print(f"播放指令發生錯誤：{str(e)}")
+                    logging.error(f"播放指令發生錯誤：{str(e)}")
                     error_embed = create_error_embed(f"播放指令發生錯誤：{str(e)}")
                     await interaction.followup.send(embed=error_embed)
         except Exception as e:
-                    print(f"播放指令發生錯誤：{str(e)}")
+                    logging.error(f"播放指令發生錯誤：{str(e)}")
                     error_embed = create_error_embed(f"播放指令發生錯誤：{str(e)}")
                     await interaction.followup.send(embed=error_embed)
     #==暫停音樂==
@@ -194,8 +183,8 @@ class Musicplay(commands.Cog):
             )
             await interaction.followup.send(embed=embed)
             return
-        vc: wavelink.Player = interaction.guild.voice_client
-        if not vc.playing:
+        player: CustomPlayer = interaction.guild.voice_client
+        if not player.is_playing:
             embed = discord.Embed(
                 title="❌ 無法暫停",
                 description="目前沒有播放任何歌曲",
@@ -204,7 +193,7 @@ class Musicplay(commands.Cog):
             await interaction.followup.send(embed=embed)
             return
         try:
-            if vc.paused:
+            if player.is_paused:
                 embed = discord.Embed(
                     title="⚠️ 已經暫停",
                     description="音樂已經處於暫停狀態",
@@ -212,7 +201,7 @@ class Musicplay(commands.Cog):
                 )
                 await interaction.followup.send(embed=embed)
                 return
-            await vc.pause(True)
+            await player.set_pause(True)
             embed = discord.Embed(
                 title="⏸️ 已暫停",
                 description="音樂已暫停播放",
@@ -220,7 +209,7 @@ class Musicplay(commands.Cog):
             )
             await interaction.followup.send(embed=embed)
         except Exception as e:
-            print(f"暫停時發生錯誤：{e}")
+            logging.error(f"暫停時發生錯誤：{e}")
             embed = create_error_embed(f"暫停時時發生錯誤：{str(e)}")
             await interaction.followup.send(embed=embed)
     #==繼續播放==
@@ -237,8 +226,8 @@ class Musicplay(commands.Cog):
             )
             await interaction.followup.send(embed=embed)
             return
-        vc: wavelink.Player = interaction.guild.voice_client
-        if not vc.playing:
+        player: CustomPlayer = interaction.guild.voice_client
+        if not player.is_playing:
             embed = discord.Embed(
                 title="❌ 無法繼續播放",
                 description="目前沒有播放任何歌曲",
@@ -247,7 +236,7 @@ class Musicplay(commands.Cog):
             await interaction.followup.send(embed=embed)
             return
         try:
-            if not vc.paused:
+            if not player.is_paused:
                 embed = discord.Embed(
                     title="⚠️ 已在播放中",
                     description="音樂已經在播放中",
@@ -255,7 +244,7 @@ class Musicplay(commands.Cog):
                 )
                 await interaction.followup.send(embed=embed)
                 return
-            await vc.pause(False)
+            await player.set_pause(False)
             embed = discord.Embed(
                 title="▶️ 繼續播放",
                 description="音樂已繼續播放",
@@ -263,7 +252,7 @@ class Musicplay(commands.Cog):
             )
             await interaction.followup.send(embed=embed)
         except Exception as e:
-            print(f"繼續播放時發生錯誤：{e}")
+            logging.error(f"繼續播放時發生錯誤：{e}")
             embed = create_error_embed(f"繼續播放時發生錯誤：{str(e)}")
             await interaction.followup.send(embed=embed)
     #==跳過音樂==
@@ -276,20 +265,20 @@ class Musicplay(commands.Cog):
         if not interaction.guild.voice_client:
             await interaction.followup.send("❌ 沒有歌曲正在播放！")
             return
-        vc: wavelink.Player = interaction.guild.voice_client
+        player: CustomPlayer = interaction.guild.voice_client
         guild_id = interaction.guild_id
-        if not vc.playing:
+        if not player.is_playing:
             await interaction.followup.send("❌ 沒有歌曲正在播放！")
             return
         next_song = None
-        if client.loop_mode.get(guild_id, False) and client.queues[guild_id]:
-            current_song = client.current_songs[guild_id]
-            queue_list = list(client.queues[guild_id])
+        if player.queue.is_looping and not player.queue.is_empty:
+            current_song = player.current
+            queue_list = player.queue.get_queue()
             current_index = queue_list.index(current_song)
             next_index = (current_index + 1) % len(queue_list)
             next_song = queue_list[next_index]
-        elif client.queues[guild_id]:
-            next_song = client.queues[guild_id][0]
+        elif player.queue.get_queue():
+            next_song = player.queue.get_queue()[0]
         embed = discord.Embed(
             title="⏭️ 已跳過當前歌曲",
             color=EMBED_COLORS['success']
@@ -297,19 +286,18 @@ class Musicplay(commands.Cog):
         if next_song:
             embed.add_field(
                 name="即將播放",
-                value=f"[{next_song.title}]({next_song.url})",
+                value=f"[{next_song.title}]({next_song.uri})",
                 inline=False
             )
         await interaction.followup.send(embed=embed)
-        await vc.stop()
+        await player.stop()
     #==音樂音量==
     @py.command(name="音量", description="調整音樂音量")
     async def volume(self, interaction: discord.Interaction, vol: int):
         client = self.get_client()
         await interaction.response.defer()
-        guild_id = interaction.guild_id
-        vc: wavelink.Player = interaction.guild.voice_client
-        if not vc:
+        player: CustomPlayer = interaction.guild.voice_client
+        if not player:
             embed = discord.Embed(
                 title="❌ 機器人未在語音頻道",
                 description="請先使用 /play 播放音樂",
@@ -325,8 +313,7 @@ class Musicplay(commands.Cog):
             )
             await interaction.followup.send(embed=embed)
             return
-        await vc.set_volume(vol)
-        client.guild_volumes[guild_id] = vol
+        await player.set_volume(vol)
         embed = discord.Embed(
             title="🔊 音量已調整",
             description=f"音量已設定為 {vol}",
@@ -340,15 +327,14 @@ class Musicplay(commands.Cog):
         await interaction.response.defer()
         if not await check_voice_state_and_respond(interaction):
             return
-        guild_id = interaction.guild_id
-        vc: wavelink.Player = interaction.guild.voice_client
-        if not vc or not vc.playing:
+        player: CustomPlayer = interaction.guild.voice_client
+        if not player or not player.is_playing:
             await interaction.followup.send("❌ 沒有歌曲正在播放！")
             return
-        song = client.current_songs.get(guild_id)
-        view = MusicControlView(song, vc, guild_id, client)
-        message = await interaction.followup.send(embed=None, view=view)
-        await start_auto_update(guild_id, vc, message, view)
+        song = player.current
+        view = MusicControlView(song, player)
+        message = await interaction.followup.send(view=view)
+        await start_auto_update(interaction.guild_id, player, message)
     #==循環模式==
     @py.command(name="循環", description="切換循環播放模式")
     async def loop(self, interaction: discord.Interaction):
@@ -356,23 +342,21 @@ class Musicplay(commands.Cog):
         await interaction.response.defer()
         if not await check_voice_state_and_respond(interaction):
                 return
-        guild_id = interaction.guild_id
-        if not hasattr(client, 'loop_mode'):
-            client.loop_mode = {}
-        client.loop_mode[guild_id] = not client.loop_mode.get(guild_id, False)
-        if client.loop_mode[guild_id]:
-            if guild_id in client.current_songs:
-                current_song = client.current_songs[guild_id]
-                if current_song not in client.queues[guild_id]:
-                    client.queues[guild_id].append(current_song)
-        status = "開啟" if client.loop_mode[guild_id] else "關閉"
+        player: CustomPlayer = interaction.guild.voice_client
+        if not player or not player.is_playing:
+            await interaction.followup.send("❌ 沒有歌曲正在播放！")
+            return
+        
+        player.queue.set_loop_mode(player.queue.disable_loop() if player.queue.loop_mode else player.queue.set_loop_mode(lava_lyra.LoopMode.QUEUE)) 
+       
+        status = "開啟" if player.queue.is_looping else "關閉"
         embed = discord.Embed(
             title="🔄 循環播放設置",
             description=f"循環播放已{status}",
             color=EMBED_COLORS['success']
         )
-        if client.loop_mode[guild_id]:
-            total_songs = len(client.queues[guild_id])
+        if player.queue.is_looping:
+            total_songs = player.queue.count
             embed.add_field(
                 name="循環清單",
                 value=f"目前共有 {total_songs} 首歌曲在循環播放中",

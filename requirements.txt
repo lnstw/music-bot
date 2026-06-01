@@ -1,10 +1,9 @@
-discord.py
-wavelink
+git+https://github.com/Rapptz/discord.py
 spotipy
 requests
-git+https://github.com/Rapptz/discord.py
-wavelink
+lava-lyra
 spotipy
 requests
 Pillow
 python-dotenv
+aiohttp
