@@ -4,13 +4,10 @@ from typing import Optional
 from urllib.parse import urlparse
 import lava_lyra
 import logging
-from collections import deque
 from core.embed import create_error_embed, EMBED_COLORS
 from core.view import MusicControlView
 from core.player import CustomPlayer
 import logging
-from core.log import setup_logging
-setup_logging()
 
 _client = None
 def set_client_ref(client):

@@ -1,17 +1,16 @@
-import os
-
 import discord
 from discord.ext import commands
 import asyncio
 import logging
 import datetime
+import os
 from discord.ext import tasks
 import lava_lyra
 
 from core.view import RefreshButton, opselect_view, CategorySelectView, CommandSelectView, CommandDetailView
-from core.embed import create_error_embed, EMBED_COLORS
+from core.embed import EMBED_COLORS
 from core.player import CustomPlayer
-from core.config import config, spotify
+from core.config import config
 from core.log import setup_logging
 
 setup_logging()

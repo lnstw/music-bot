@@ -5,9 +5,7 @@ from discord import ui
 from core.player import CustomPlayer
 from core.config import check_and_create_config
 import logging
-from core.log import setup_logging
 import asyncio
-setup_logging()
 
 _client = None
 def set_client_ref(client):

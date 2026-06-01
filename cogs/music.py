@@ -1,18 +1,13 @@
 import discord
 from discord import app_commands
 from discord.ext import commands
-import lava_lyra
-from collections import deque
-
-from core.playlist import process_playlist, process_spotify_track, process_spotify_album, get_platform, process_spotify_playlist, process_youtube_playlist
 from core.embed import check_voice_state_and_respond, create_song_embed, create_error_embed, EMBED_COLORS, start_auto_update
+from core.playlist import process_playlist, process_spotify_track, process_spotify_album, get_platform, process_spotify_playlist, process_youtube_playlist
 from core.view import MusicControlView
 from core.player import CustomPlayer
-from core.config import spotify
 from core.config import config, spotify
+import lava_lyra
 import logging
-from core.log import setup_logging
-setup_logging()
 
 
 class Musicplay(commands.Cog):
@@ -26,8 +21,6 @@ class Musicplay(commands.Cog):
     #==播放音樂==
     @py.command(name="播放", description="播放音樂")
     async def play(self, interaction: discord.Interaction, query: str):
-        client = self.get_client()
-        guild_id = interaction.guild_id
         try:
             await interaction.response.defer()
             if not await check_voice_state_and_respond(interaction):

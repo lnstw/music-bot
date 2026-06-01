@@ -1,14 +1,13 @@
 import discord
 from discord import app_commands
 from discord.ext import commands
-from core.embed import EMBED_COLORS
 import aiohttp
 import datetime
-from datetime import timedelta
 from io import BytesIO
 import asyncio
 
 from core.view import get_dominant_color, RefreshButton
+
 
 class Redgay(commands.Cog):
     def __init__(self, bot):
@@ -49,5 +48,5 @@ class Redgay(commands.Cog):
                 await interaction.followup.send(embed=embed, view=view, file=file)
 
 
-async def setup(bot):
+async def setup(bot: commands.Bot):
     await bot.add_cog(Redgay(bot))

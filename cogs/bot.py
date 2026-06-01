@@ -1,12 +1,7 @@
 import discord
 from discord import app_commands
 from discord.ext import commands
-import lava_lyra
-from collections import deque
-import asyncio
-from typing import cast
-
-from core.embed import create_error_embed, EMBED_COLORS, check_voice_state_and_respond
+from core.embed import check_voice_state_and_respond
 from core.player import CustomPlayer
 
 
@@ -133,5 +128,5 @@ class botcommand(commands.Cog):
     #         error_embed = create_error_embed(f"重新載入時發生錯誤：{str(e)}")
     #         await interaction.followup.send(embed=error_embed)
 
-async def setup(bot):
+async def setup(bot: commands.Bot):
     await bot.add_cog(botcommand(bot))

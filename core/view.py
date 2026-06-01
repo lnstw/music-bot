@@ -4,7 +4,6 @@ from discord.ext import commands
 from discord import ui
 import lava_lyra
 import asyncio
-from collections import deque
 import datetime
 import aiohttp
 from io import BytesIO
@@ -14,8 +13,7 @@ import colorsys
 from core.embed import create_error_embed, check_voice_state_and_respond, EMBED_COLORS
 from core.player import CustomPlayer
 import logging
-from core.log import setup_logging
-setup_logging()
+
 
 class PlayPauseButton(discord.ui.Button):
     def __init__(self):
