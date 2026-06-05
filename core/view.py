@@ -386,16 +386,23 @@ class timeout(discord.ui.LayoutView):
         )
         self.add_item(container)
 
+from discord.ui import View, Button
+
 class QueuePaginator(View):
     def __init__(self, interaction, queue_list, songs_per_page=10, current_song=None, status_parts=None):
         super().__init__(timeout=60)
         self.interaction: discord.Interaction = interaction
         self.queue_list: list[lava_lyra.Track] = queue_list
-        self.songs_per_page: int = songs_per_page
         self.current_song: lava_lyra.Track | None = current_song
-        self.total_pages = (len(queue_list) + songs_per_page - 1) // songs_per_page or 1
-        self.page = 0
         self.status_parts = status_parts or []
+        
+        self.page = 0
+        self.songs_per_page = songs_per_page
+        
+        # 預先計算好每一頁「真正能容納的歌曲範圍」，徹底解決因字數截斷導致的跳行 Bug
+        self.page_ranges = self._calculate_pages()
+        self.total_pages = len(self.page_ranges) or 1
+
         self.prev_button = Button(label="上一頁", style=discord.ButtonStyle.primary)
         self.next_button = Button(label="下一頁", style=discord.ButtonStyle.primary)
         self.prev_button.callback = self.prev_page
@@ -404,38 +411,78 @@ class QueuePaginator(View):
         self.add_item(self.next_button)
         self.update_buttons()
 
+    def _calculate_pages(self) -> list[tuple[int, int]]:
+        """動態計算分頁範圍，確保每一頁的 Embed Field 絕對不會超過 1024 字元"""
+        pages = []
+        start_idx = 0
+        total_songs = len(self.queue_list)
+        
+        while start_idx < total_songs:
+            current_length = 0
+            end_idx = start_idx
+            while end_idx < total_songs and (end_idx - start_idx) < self.songs_per_page:
+                song = self.queue_list[end_idx]
+                duration_sec = int(song.length / 1000) if song.length else 0
+                duration = f"{duration_sec//60}:{duration_sec%60:02d}"
+                title = song.title[:50] + "..." if len(song.title) > 50 else song.title
+                line = f"`{end_idx+1}.` [{title}]({song.uri}) | `{duration}`\n"
+                if current_length + len(line) > 950:
+                    break                  
+                current_length += len(line)
+                end_idx += 1
+            if end_idx == start_idx:
+                end_idx += 1
+                
+            pages.append((start_idx, end_idx))
+            start_idx = end_idx
+            
+        return pages
+
     def update_buttons(self):
         self.prev_button.disabled = self.page == 0
         self.next_button.disabled = self.page >= self.total_pages - 1
 
     def get_embed(self):
-        start_idx = self.page * self.songs_per_page
-        end_idx = min(start_idx + self.songs_per_page, len(self.queue_list))
         embed = discord.Embed(
             title=f"📃 播放清單 (第 {self.page+1}/{self.total_pages} 頁)",
             color=EMBED_COLORS['info']
         )
         if self.status_parts:
             embed.description = " | ".join(self.status_parts)
+            
         if self.current_song:
             duration_sec = int(self.current_song.length / 1000) if self.current_song.length else 0
             duration = f"{duration_sec//60}:{duration_sec%60:02d}"
             current_song_requester = self.current_song.requester.mention if self.current_song.requester else "未知用戶"
             current_text = f"[{self.current_song.title}]({self.current_song.uri})\n`{duration}` | {current_song_requester}"
             embed.add_field(name="🎵 正在播放", value=current_text, inline=False)
+            
         description = ""
-        for idx, song in enumerate(self.queue_list[start_idx:end_idx], start=start_idx+1):
-            duration_sec = int(song.length / 1000) if song.length else 0
-            duration = f"{duration_sec//60}:{duration_sec%60:02d}" 
-            title = song.title
-            if len(title) > 60:
-                title = title[:57] + "..."   
-            line = f"`{idx}.` [{title}]({song.uri}) | `{duration}`\n"
-            description += line
+        display_start = 0
+        display_end = 0
+        
+        if self.page_ranges and self.page < len(self.page_ranges):
+            start_idx, end_idx = self.page_ranges[self.page]
+            display_start = start_idx + 1
+            display_end = end_idx
+            
+            for idx in range(start_idx, end_idx):
+                song = self.queue_list[idx]
+                duration_sec = int(song.length / 1000) if song.length else 0
+                duration = f"{duration_sec//60}:{duration_sec%60:02d}"
+                
+                title = song.title[:50] + "..." if len(song.title) > 50 else song.title
+                line = f"`{idx+1}.` [{title}]({song.uri}) | `{duration}`\n"
+                description += line
+
+            if (end_idx - start_idx) < self.songs_per_page and end_idx < len(self.queue_list):
+                description += "-# 翻頁後還有更多歌曲..."
+        
         if not description:
             description = "播放清單是空的"
+            
         embed.add_field(
-            name=f"📋 待播清單 ({start_idx+1}-{min(end_idx, len(self.queue_list))}/{len(self.queue_list)})",
+            name=f"📋 待播清單 ({display_start}-{display_end}/{len(self.queue_list)})",
             value=description,
             inline=False
         )
@@ -444,6 +491,7 @@ class QueuePaginator(View):
         hours = total_duration // 3600
         minutes = (total_duration % 3600) // 60
         seconds = total_duration % 60
+        
         if len(self.queue_list) > 0:
             if hours > 0:
                 embed.set_footer(text=f"總時長: {hours}:{minutes:02d}:{seconds:02d}")
