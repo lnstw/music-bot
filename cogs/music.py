@@ -43,6 +43,15 @@ class Musicplay(commands.Cog):
                 if 'playlist' in query or 'album' in query:
                     is_playlist = True
             if is_playlist:
+                if not interaction.guild.voice_client:
+                    try:
+                        player: CustomPlayer = await interaction.user.voice.channel.connect(cls=CustomPlayer)
+                    except Exception as e:
+                        error_embed = create_error_embed(f"無法連接語音頻道：{str(e)}")
+                        await interaction.followup.send(embed=error_embed)
+                        return
+                else:
+                    player: CustomPlayer = interaction.guild.voice_client
                 platform = get_platform(query)
                 search_queries = []
                 try:
@@ -53,7 +62,7 @@ class Musicplay(commands.Cog):
                             search_queries = await process_spotify_album(spotify, query)
                     elif platform == 'youtube':
                         if 'list=' in query:
-                            search_queries = await process_youtube_playlist(query)
+                            search_queries = await process_youtube_playlist(player, query)
                     if not search_queries:
                         embed = discord.Embed(
                             title="❌ 無法處理播放清單",
@@ -102,7 +111,11 @@ class Musicplay(commands.Cog):
                                     search_queries = [search_query]
                         elif platform == 'youtube':
                             if 'playlist' in query.lower() or 'list=' in query:
-                                search_queries = await process_youtube_playlist(query)
+                                if interaction.guild.voice_client:
+                                    player: CustomPlayer = interaction.guild.voice_client
+                                else:
+                                    player: CustomPlayer = await interaction.user.voice.channel.connect(cls=CustomPlayer)
+                                search_queries = await process_youtube_playlist(player, query)
                             else:
                                 search_queries = [query]
                         else:

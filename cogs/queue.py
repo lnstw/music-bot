@@ -185,7 +185,7 @@ class Queue(commands.Cog):
                             search_queries = await process_spotify_album(spotify, query)
                     elif platform == 'youtube':
                         if 'list=' in query:
-                            search_queries = await process_youtube_playlist(query)
+                            search_queries = await process_youtube_playlist(player, query)
 
                     if not search_queries:
                         embed = discord.Embed(

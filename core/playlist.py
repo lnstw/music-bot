@@ -174,7 +174,6 @@ async def process_playlist(
                     if not first_song_added and not player.is_playing:
                         if player:
                             player.queue.extend(queue_list)
-                            # 初始化音量（在播放第一首歌曲前）
                             await player.initialize_volume()
                         if player.is_paused:
                             await player.set_pause(False)
@@ -189,12 +188,8 @@ async def process_playlist(
                 progress_embed.description = f"正在處理 {playlist_name}\n已完成 {index + 1}/{len(search_queries)} 首歌曲"
                 await progress_message.edit(embed=progress_embed)
             await asyncio.sleep(0.1)
-        
-        # 為所有添加的歌曲設定請求者
         for track in added_songs:
             track.requester = interaction.user
-        
-        # 移除隊列中的第一首歌曲（因為已經在播放）
         if added_songs and player.queue:
             first_track = added_songs[0]
             queue_list = player.queue.get_queue()
