@@ -25,7 +25,6 @@ class Queue(commands.Cog):
             if not interaction.guild.voice_client:
                 await interaction.followup.send("❌ 機器人不在語音頻道中！")
                 return
-            
             player: CustomPlayer = interaction.guild.voice_client
             await interaction.response.defer()
             queue_list = player.queue.get_queue()

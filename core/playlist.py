@@ -54,24 +54,6 @@ async def process_spotify_album(spotify_client, url: str) -> list[str]:
     except Exception as e:
         logging.error(f"Spotify 專輯處理錯誤: {e}")
         return []
-    
-async def process_youtube_playlist(player: CustomPlayer, url: str) -> list[str]:
-    try:
-        if 'list=' not in url:
-            return []
-        playlist_id = url.split('list=')[1].split('&')[0]
-        playlist_url = f"https://youtube.com/playlist?list={playlist_id}"
-        try:
-            playlist = await player.get_tracks(playlist_url)
-            if isinstance(playlist, lava_lyra.Playlist):
-                return [track.uri for track in playlist.tracks]
-            return [track.uri for track in playlist if hasattr(track, 'uri')]
-        except Exception as e:
-            logging.error(f"播放清單搜尋錯誤: {e}")
-            return []
-    except Exception as e:
-        logging.error(f"YouTube 播放清單處理錯誤: {e}")
-        return []
 
 async def send_playlist_results(interaction: discord.Interaction, added_tracklist: list[lava_lyra.Track], failed_tracklist: list, playlist_name: str):
     embed = discord.Embed(
@@ -155,14 +137,15 @@ async def process_playlist(
         platform = get_platform(original_url)
         queries = reversed(search_queries) if insert_next else search_queries
         player: CustomPlayer = interaction.guild.voice_client
-        queue_list = player.queue.get_queue()
+        queue_list = player.queue.get_queue() if hasattr(player.queue, 'get_queue') else []    
         for index, query in enumerate(queries):
             try:
                 tracks = await player.get_tracks(query)
                 if tracks and tracks[0] is not None:
                     track = tracks[0]
+                    track.requester = interaction.user   
                     if insert_next:
-                        if player and player.queue.is_looping:
+                        if player and getattr(player.queue, 'is_looping', False):
                             current_song = player.current
                             insert_pos = queue_list.index(current_song) + 1 if current_song in queue_list else 0
                         else:
@@ -170,10 +153,11 @@ async def process_playlist(
                         player.queue.put_at_index(insert_pos, track)
                     else:
                         player.queue.put(track)
+                        
                     added_songs.append(track)
+                    
                     if not first_song_added and not player.is_playing:
                         if player:
-                            player.queue.extend(queue_list)
                             await player.initialize_volume()
                         if player.is_paused:
                             await player.set_pause(False)
@@ -184,21 +168,11 @@ async def process_playlist(
             except Exception as e:
                 logging.error(f"[process_playlist] 處理歌曲時發生錯誤：{str(e)}")
                 failed_songs.append(query)
+                
             if (index + 1) % 20 == 0 or index == len(search_queries) - 1:
                 progress_embed.description = f"正在處理 {playlist_name}\n已完成 {index + 1}/{len(search_queries)} 首歌曲"
                 await progress_message.edit(embed=progress_embed)
             await asyncio.sleep(0.1)
-        for track in added_songs:
-            track.requester = interaction.user
-        if added_songs and player.queue:
-            first_track = added_songs[0]
-            queue_list = player.queue.get_queue()
-            if first_track in queue_list:
-                queue_list.remove(first_track)
-                player.queue.clear()
-                for track in queue_list:
-                    player.queue.put(track)
-        
         if not added_songs:
             embed = discord.Embed(
                 title="⚠️ 播放失敗",
@@ -207,6 +181,7 @@ async def process_playlist(
             )
             await interaction.followup.send(embed=embed)
             return
+            
         await send_playlist_results(interaction, added_songs, failed_songs, playlist_name)
     except Exception as e:
         logging.error(f"[process_playlist] 播放清單處理錯誤：{str(e)}")
@@ -234,4 +209,22 @@ async def process_spotify_playlist(spotify_client, url: str) -> list[str]:
         return tracks
     except Exception as e:
         logging.error(f"Spotify 播放清單處理錯誤: {e}")
+        return []
+
+async def process_youtube_playlist(player: CustomPlayer, url: str) -> list[str]:
+    try:
+        if 'list=' not in url:
+            return []
+        playlist_id = url.split('list=')[1].split('&')[0]
+        playlist_url = f"https://youtube.com/playlist?list={playlist_id}"
+        try:
+            playlist = await player.get_tracks(playlist_url)
+            if isinstance(playlist, lava_lyra.Playlist):
+                return [track.uri for track in playlist.tracks]
+            return [track.uri for track in playlist if hasattr(track, 'uri')]
+        except Exception as e:
+            logging.error(f"播放清單搜尋錯誤: {e}")
+            return []
+    except Exception as e:
+        logging.error(f"YouTube 播放清單處理錯誤: {e}")
         return []

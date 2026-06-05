@@ -424,14 +424,13 @@ class QueuePaginator(View):
             current_text = f"[{self.current_song.title}]({self.current_song.uri})\n`{duration}` | {current_song_requester}"
             embed.add_field(name="🎵 正在播放", value=current_text, inline=False)
         description = ""
-        char_limit = 1024
         for idx, song in enumerate(self.queue_list[start_idx:end_idx], start=start_idx+1):
             duration_sec = int(song.length / 1000) if song.length else 0
-            duration = f"{duration_sec//60}:{duration_sec%60:02d}"
-            line = f"`{idx}.` [{song.title}]({song.uri}) | `{duration}`\n"
-            if len(description) + len(line) > char_limit:
-                description += f"...（已自動截斷，請翻頁查看更多）"
-                break
+            duration = f"{duration_sec//60}:{duration_sec%60:02d}" 
+            title = song.title
+            if len(title) > 60:
+                title = title[:57] + "..."   
+            line = f"`{idx}.` [{title}]({song.uri}) | `{duration}`\n"
             description += line
         if not description:
             description = "播放清單是空的"
@@ -441,14 +440,15 @@ class QueuePaginator(View):
             inline=False
         )
         total_duration_ms = sum(s.length for s in self.queue_list)
-        total_duration = int(total_duration_ms / 1000)  # 轉換為秒
+        total_duration = int(total_duration_ms / 1000)  
         hours = total_duration // 3600
         minutes = (total_duration % 3600) // 60
+        seconds = total_duration % 60
         if len(self.queue_list) > 0:
             if hours > 0:
-                embed.set_footer(text=f"總時長: {hours}:{minutes:02d}:00")
+                embed.set_footer(text=f"總時長: {hours}:{minutes:02d}:{seconds:02d}")
             else:
-                embed.set_footer(text=f"總時長: {minutes}:00")
+                embed.set_footer(text=f"總時長: {minutes:02d}:{seconds:02d}")
         return embed
 
     async def prev_page(self, interaction: discord.Interaction):
