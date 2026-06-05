@@ -128,15 +128,22 @@ class MusicControlView(discord.ui.LayoutView):
         if not await check_voice_state_and_respond(interaction):
             return
         if not interaction.guild.voice_client:
-            await interaction.edit_original_response(content="❌ 沒有歌曲正在播放！", embed=None, view=None)
-            return
+            await interaction.followup.send("❌ 沒有歌曲正在播放！",silent=True)
+            return    
         player: CustomPlayer = interaction.guild.voice_client
-        guild_id = interaction.guild_id
-        if not player.is_playing:
-            await interaction.edit_original_response(content="❌ 沒有歌曲正在播放！", embed=None, view=None)
+        if not player.is_playing and not player.current:
+            await interaction.followup.send("❌ 沒有歌曲正在播放！",silent=True)
             return
-        
-        next_track = await player.play_next()
+        queue_list = player.queue.get_queue() if hasattr(player.queue, 'get_queue') else list(player.queue)
+        next_track = None
+        if queue_list:
+            if player.current and queue_list[0].uri == player.current.uri:
+                if len(queue_list) > 1:
+                    next_track = queue_list[1]
+            else:
+                next_track = queue_list[0]
+        if not next_track and getattr(player.queue, 'is_looping', False):
+            next_track = player.current
         embed = discord.Embed(
             title="⏭️ 已跳過當前歌曲",
             color=EMBED_COLORS['success']
@@ -147,7 +154,13 @@ class MusicControlView(discord.ui.LayoutView):
                 value=f"[{next_track.title}]({next_track.uri})",
                 inline=False
             )
+        else:
+            embed.description = "佇列中已無其他歌曲。"
         await interaction.followup.send(embed=embed,silent=True)
+        if hasattr(player, 'skip'):
+            await player.skip()
+        else:
+            await player.stop()
 
     async def play_pause(self, interaction: discord.Interaction):
         await interaction.response.defer()

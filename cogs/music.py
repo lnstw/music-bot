@@ -271,43 +271,47 @@ class Musicplay(commands.Cog):
     #==跳過音樂==
     @py.command(name="跳過", description="跳過目前的歌曲")
     async def skip(self, interaction: discord.Interaction):
-        client = self.get_client()
         await interaction.response.defer()
+        
         if not await check_voice_state_and_respond(interaction):
-                return
+            return
         if not interaction.guild.voice_client:
             await interaction.followup.send("❌ 沒有歌曲正在播放！")
-            return
+            return    
         player: CustomPlayer = interaction.guild.voice_client
-        guild_id = interaction.guild_id
-        if not player.is_playing:
+        if not player.is_playing and not player.current:
             await interaction.followup.send("❌ 沒有歌曲正在播放！")
             return
-        next_song = None
-        if player.queue.is_looping and not player.queue.is_empty:
-            current_song = player.current
-            queue_list = player.queue.get_queue()
-            current_index = queue_list.index(current_song)
-            next_index = (current_index + 1) % len(queue_list)
-            next_song = queue_list[next_index]
-        elif player.queue.get_queue():
-            next_song = player.queue.get_queue()[0]
+        queue_list = player.queue.get_queue() if hasattr(player.queue, 'get_queue') else list(player.queue)
+        next_track = None
+        if queue_list:
+            if player.current and queue_list[0].uri == player.current.uri:
+                if len(queue_list) > 1:
+                    next_track = queue_list[1]
+            else:
+                next_track = queue_list[0]
+        if not next_track and getattr(player.queue, 'is_looping', False):
+            next_track = player.current
         embed = discord.Embed(
             title="⏭️ 已跳過當前歌曲",
             color=EMBED_COLORS['success']
         )
-        if next_song:
+        if next_track:
             embed.add_field(
                 name="即將播放",
-                value=f"[{next_song.title}]({next_song.uri})",
+                value=f"[{next_track.title}]({next_track.uri})",
                 inline=False
             )
+        else:
+            embed.description = "佇列中已無其他歌曲。"
         await interaction.followup.send(embed=embed)
-        await player.stop()
+        if hasattr(player, 'skip'):
+            await player.skip()
+        else:
+            await player.stop()
     #==音樂音量==
     @py.command(name="音量", description="調整音樂音量")
     async def volume(self, interaction: discord.Interaction, vol: int):
-        client = self.get_client()
         await interaction.response.defer()
         player: CustomPlayer = interaction.guild.voice_client
         if not player:
@@ -359,9 +363,7 @@ class Musicplay(commands.Cog):
         if not player or not player.is_playing:
             await interaction.followup.send("❌ 沒有歌曲正在播放！")
             return
-        
         player.queue.set_loop_mode(player.queue.disable_loop() if player.queue.loop_mode else player.queue.set_loop_mode(lava_lyra.LoopMode.QUEUE)) 
-       
         status = "開啟" if player.queue.is_looping else "關閉"
         embed = discord.Embed(
             title="🔄 循環播放設置",
