@@ -1,11 +1,10 @@
 import discord
 from discord import app_commands
 from discord.ext import commands
-import lava_lyra
-
 from core.embed import check_voice_state_and_respond, EMBED_COLORS
 from core.view import CategorySelectView
 from core.player import CustomPlayer
+
 
 class Other(commands.Cog):
     def __init__(self, bot: commands.Bot):
@@ -29,7 +28,7 @@ class Other(commands.Cog):
     @app_commands.command(name="邀請機器人", description="獲取機器人邀請連結")
     async def slash_command(self, interaction: discord.Interaction):
         invite_bot = discord.ui.View()
-        invite_bot.add_item(discord.ui.Button(label="邀請我", style=discord.ButtonStyle.success, url="https://discord.com/oauth2/authorize?client_id=1269984207501787177"))
+        invite_bot.add_item(discord.ui.Button(label="邀請我", style=discord.ButtonStyle.success, url=f"https://discord.com/oauth2/authorize?client_id={self.bot.user.id}"))
         await interaction.response.send_message("點下面的按鈕邀請我AAAAAA", view=invite_bot)
     
     @app_commands.command(name="停止", description="停止播放並清空播放清單")
@@ -52,5 +51,5 @@ class Other(commands.Cog):
         )
         await interaction.followup.send(embed=embed)
 
-async def setup(bot):
+async def setup(bot: commands.Bot):
     await bot.add_cog(Other(bot))

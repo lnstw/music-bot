@@ -1,17 +1,12 @@
 import discord
 from discord import app_commands
 from discord.ext import commands
-from collections import deque
-import random
-import lava_lyra
-from core.playlist import process_playlist, process_spotify_track, process_spotify_album, get_platform, process_spotify_playlist, process_youtube_playlist
 from core.embed import create_error_embed, check_voice_state_and_respond, EMBED_COLORS
+from core.playlist import process_playlist, process_spotify_track, process_spotify_album, get_platform, process_spotify_playlist, process_youtube_playlist
 from core.view import QueuePaginator
 from core.player import CustomPlayer
 from core.config import spotify
 import logging
-from core.log import setup_logging
-setup_logging()
 
 class Queue(commands.Cog):
     def __init__(self, bot: commands.Bot):

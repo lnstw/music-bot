@@ -144,5 +144,5 @@ class botcommand(commands.Cog):
     #         error_embed = create_error_embed(f"重新載入時發生錯誤：{str(e)}")
     #         await interaction.followup.send(embed=error_embed)
 
-async def setup(bot):
+async def setup(bot: commands.Bot):
     await bot.add_cog(botcommand(bot))
