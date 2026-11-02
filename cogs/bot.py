@@ -9,6 +9,7 @@ from typing import cast
 from core.view import MusicControlView
 from core.embed import create_error_embed, EMBED_COLORS, check_voice_state_and_respond, start_auto_update
 from core.player import CustomPlayer
+from core.thread import schedule_delete
 
 
 class botcommand(commands.Cog):
@@ -34,6 +35,7 @@ class botcommand(commands.Cog):
             return
         vc: CustomPlayer = interaction.guild.voice_client
         await vc.destroy()
+        schedule_delete(interaction.guild)
         await interaction.followup.send("👋 已離開語音頻道")
     #==重新載入==
     # @bc.command(name="重載", description="重新載入音樂播放 (重新連接機器人)")

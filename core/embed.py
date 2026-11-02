@@ -3,6 +3,7 @@ import discord
 import lava_lyra
 from discord import ui
 from core.player import CustomPlayer
+from core.thread import schedule_delete, send_notice
 from core.config import check_and_create_config
 import logging
 import asyncio
@@ -103,6 +104,12 @@ def create_error_embed(error_message: str, config: dict = None) -> discord.Embed
     embed.set_footer(text="機器人錯誤回報")
     return embed
 
+async def _voice_error(interaction: discord.Interaction, embed: discord.Embed):
+    if getattr(interaction, "type", None) == discord.InteractionType.component:
+        await send_notice(interaction, embed, content=interaction.user.mention)
+    else:
+        await interaction.followup.send(f"{interaction.user.mention}",embed=embed)
+
 async def check_voice_state_and_respond(interaction: discord.Interaction) -> bool:
     if not interaction.user.voice:
         embed = discord.Embed(
@@ -110,7 +117,7 @@ async def check_voice_state_and_respond(interaction: discord.Interaction) -> boo
             description="請先加入語音頻道",
             color=EMBED_COLORS['error']
         )
-        await interaction.followup.send(f"{interaction.user.mention}",embed=embed)
+        await _voice_error(interaction, embed)
         return False
     vc = interaction.guild.voice_client if interaction.guild else None
     if vc and vc.channel and interaction.user.voice.channel != vc.channel:
@@ -119,7 +126,7 @@ async def check_voice_state_and_respond(interaction: discord.Interaction) -> boo
             description=f"請先加入機器人所在的語音頻道 {vc.channel.mention}",
             color=EMBED_COLORS['error']
         )
-        await interaction.followup.send(f"{interaction.user.mention}",embed=embed)
+        await _voice_error(interaction, embed)
         return False
     return True
 
@@ -191,6 +198,7 @@ async def start_auto_update(
                             await message.edit(view=playend())
                         except (discord.NotFound, discord.Forbidden):
                             pass
+                        schedule_delete(message.guild)
                         break
                     song = vc.current
                     if not song:
@@ -228,7 +236,7 @@ async def start_auto_update(
         except Exception as e:
             logging.error(f"[AutoUpdate] Guild {guild_id}: 致命錯誤：{e}")
         finally:
-            if _client and guild_id in _client.auto_update_tasks:
+            if _client and _client.auto_update_tasks.get(guild_id) is asyncio.current_task():
                 del _client.auto_update_tasks[guild_id]
             logging.info(f"[AutoUpdate] Guild {guild_id}: 自動更新任務結束")
     

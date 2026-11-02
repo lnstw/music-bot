@@ -49,9 +49,6 @@
    DISCORD_GUILD_ID="請填入伺服器 ID（機器人掛著使用的群組）"
    DISCORD_VOICE_CHANNEL_ID="請填入語音頻道 ID（機器人掛著使用的頻道）"
 
-   SPOTIFY_CLIENT_ID="請填入你的 Spotify Client ID"
-   SPOTIFY_CLIENT_SECRET="請填入你的 Spotify Client Secret"
-
    NODE_HOST="請填入你的 Lavalink 網址（例如：freelavalink.com）"
    NODE_PORT=443
    NODE_SSL="true"
@@ -67,7 +64,7 @@
 - **開發者專用命令**：需在環境變數中正確設定 DISCORD_USER_ID。
 
 ### ⚠️ 注意事項
-- 請勿將 DISCORD_BOT_TOKEN、SPOTIFY_CLIENT_SECRET 等敏感資訊公開。
+- 請勿將 DISCORD_BOT_TOKEN、NODE_PW 等敏感資訊公開。
 - 若使用 Lavalink，請確認 Lavalink 版本與 wavelink 相容，並確保節點資訊正確且可連線。
 - 若遇到 cache、token 或 Webhook 過期錯誤，請檢查權限並嘗試重啟或清除本地 .cache。
 
@@ -115,9 +112,6 @@ Fill in the corresponding values in .env (**NEVER publicly share this file or yo
    DISCORD_GUILD_ID="Your Discord Server ID (where the bot will stay)"
    DISCORD_VOICE_CHANNEL_ID="Your Voice Channel ID (where the bot will stay)"
    
-   SPOTIFY_CLIENT_ID="Your Spotify Client ID"
-   SPOTIFY_CLIENT_SECRET="Your Spotify Client Secret"
-   
    NODE_HOST="Your Lavalink host (e.g., freelavalink.com)"
    NODE_PORT=443
    NODE_SSL="true"
@@ -133,7 +127,7 @@ Fill in the corresponding values in .env (**NEVER publicly share this file or yo
 - **Developer Commands**: Requires DISCORD_USER_ID to be configured correctly in the environment variables.
 
 ### ⚠️ Important Notes
-- Never expose sensitive data like DISCORD_BOT_TOKEN or SPOTIFY_CLIENT_SECRET.
+- Never expose sensitive data like DISCORD_BOT_TOKEN or NODE_PW.
 - If using Lavalink, ensure the version is compatible with your wavelink library, and double-check your node credentials and connection.
 - If you encounter cache, token, or Webhook documentation errors, verify channel permissions, restart the bot, or clear the local .cache folder.
 

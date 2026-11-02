@@ -12,6 +12,7 @@ from PIL import Image
 import colorsys
 from core.embed import create_error_embed, check_voice_state_and_respond, EMBED_COLORS
 from core.player import CustomPlayer
+from core.thread import send_notice, schedule_delete
 import logging
 
 
@@ -128,7 +129,7 @@ class MusicControlView(discord.ui.LayoutView):
             return None
         return player
 
-    async def _refresh(self, interaction: discord.Interaction, player: CustomPlayer):
+    async def _redraw(self, interaction: discord.Interaction, player: CustomPlayer):
         song = player.current if player else None
         view = MusicControlView(song, player) if song else playend()
         await interaction.edit_original_response(view=view)
@@ -154,8 +155,10 @@ class MusicControlView(discord.ui.LayoutView):
         else:
             embed.description = "佇列中已無其他歌曲。"
         await player.skip()
-        await self._refresh(interaction, player)
-        await interaction.followup.send(embed=embed,silent=True)
+        if not player.current:
+            schedule_delete(interaction.guild)
+        await self._redraw(interaction, player)
+        await send_notice(interaction, embed)
 
     async def play_pause(self, interaction: discord.Interaction):
         await interaction.response.defer()
@@ -176,8 +179,8 @@ class MusicControlView(discord.ui.LayoutView):
                 title="⏸️ 已暫停播放",
                 color=EMBED_COLORS['success']
             )
-        await self._refresh(interaction, player)
-        await interaction.followup.send(embed=embed,silent=True)
+        await self._redraw(interaction, player)
+        await send_notice(interaction, embed)
 
     async def toggle_loop(self, interaction: discord.Interaction):
         await interaction.response.defer()
@@ -187,20 +190,20 @@ class MusicControlView(discord.ui.LayoutView):
         if not player:
             return
         status = "開啟" if player.toggle_loop() else "關閉"
-        await self._refresh(interaction, player)
+        await self._redraw(interaction, player)
         embed = discord.Embed(
             title="🔁 循環模式設置",
             description=f"播放清單循環模式已{status}",
             color=EMBED_COLORS['success']
         )
-        await interaction.followup.send(embed=embed, silent=True)
+        await send_notice(interaction, embed)
 
     async def show_queue(self, interaction: discord.Interaction):
         try:
             await interaction.response.defer()
             player: CustomPlayer = interaction.guild.voice_client
             if not player:
-                await interaction.followup.send("❌ 機器人不在語音頻道中！",silent=True)
+                await send_notice(interaction, content="❌ 機器人不在語音頻道中！")
                 return
             queue_list = player.queue.upcoming()
             current_song = player.current
@@ -209,11 +212,11 @@ class MusicControlView(discord.ui.LayoutView):
                 status_parts.append("🔄 循環模式：開啟")
             paginator = QueuePaginator(interaction, queue_list, songs_per_page=10, current_song=current_song, status_parts=status_parts)
             embed = paginator.get_embed()
-            await interaction.followup.send(f"{interaction.user.mention}", embed=embed, view=paginator,silent=True)
+            await send_notice(interaction, embed, content=interaction.user.mention, view=paginator)
         except Exception as e:
             logging.error(f"顯示播放清單時發生錯誤：{str(e)}")
             error_embed = create_error_embed(f"顯示播放清單時發生錯誤：{str(e)}")
-            await interaction.followup.send(embed=error_embed,silent=True)
+            await send_notice(interaction, error_embed)
 
     async def shuffle_queue(self, interaction: discord.Interaction):
         await interaction.response.defer()
@@ -221,7 +224,7 @@ class MusicControlView(discord.ui.LayoutView):
             return
         player: CustomPlayer = interaction.guild.voice_client
         if not player or not player.queue.upcoming():
-            await interaction.followup.send("❌ 播放清單是空的！",silent=True)
+            await send_notice(interaction, content="❌ 播放清單是空的！")
             return
         player.queue.shuffle_upcoming()
 
@@ -229,7 +232,7 @@ class MusicControlView(discord.ui.LayoutView):
             title="🔀 已打亂播放清單",
             color=EMBED_COLORS['success']
         )
-        await interaction.followup.send(embed=embed,silent=True)
+        await send_notice(interaction, embed)
 
     async def Rewind(self, interaction: discord.Interaction):
         await interaction.response.defer()
@@ -244,8 +247,8 @@ class MusicControlView(discord.ui.LayoutView):
             title="⏪ 已倒轉 10 秒",
             color=EMBED_COLORS['success']
         )
-        await self._refresh(interaction, player)
-        await interaction.followup.send(embed=embed,silent=True)
+        await self._redraw(interaction, player)
+        await send_notice(interaction, embed)
 
     async def forward(self, interaction: discord.Interaction):
         await interaction.response.defer()
@@ -261,8 +264,8 @@ class MusicControlView(discord.ui.LayoutView):
             title="⏩ 已快轉 10 秒",
             color=EMBED_COLORS['success']
         )
-        await self._refresh(interaction, player)
-        await interaction.followup.send(embed=embed,silent=True)
+        await self._redraw(interaction, player)
+        await send_notice(interaction, embed)
 
     async def _change_volume(self, interaction: discord.Interaction, delta: int):
         await interaction.response.defer()
@@ -278,8 +281,8 @@ class MusicControlView(discord.ui.LayoutView):
             description=f"音量已設置為 {new_volume}%",
             color=EMBED_COLORS['success']
         )
-        await self._refresh(interaction, player)
-        await interaction.followup.send(embed=embed,silent=True)
+        await self._redraw(interaction, player)
+        await send_notice(interaction, embed)
 
     async def increase_volume(self, interaction: discord.Interaction):
         await self._change_volume(interaction, 5)
@@ -292,7 +295,7 @@ class MusicControlView(discord.ui.LayoutView):
         player = await self._get_player(interaction)
         if not player:
             return
-        await self._refresh(interaction, player)
+        await self._redraw(interaction, player)
 
     async def on_error(self, interaction: discord.Interaction, error: Exception, item: discord.ui.Item) -> None:
         logging.error(f"控制器按鈕發生錯誤：{error!r}", exc_info=error)

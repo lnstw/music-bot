@@ -4,6 +4,7 @@ from discord.ext import commands
 from core.embed import check_voice_state_and_respond, EMBED_COLORS
 from core.view import CategorySelectView
 from core.player import CustomPlayer
+from core.thread import schedule_delete
 
 
 class Other(commands.Cog):
@@ -42,6 +43,7 @@ class Other(commands.Cog):
         player: CustomPlayer = interaction.guild.voice_client
         
         await player.stop_and_clear()
+        schedule_delete(interaction.guild)
         embed = discord.Embed(
             title="⏹️ 已停止播放",
             description="已清空播放清單並關閉循環模式",

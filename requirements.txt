@@ -1,6 +1,5 @@
 git+https://github.com/Rapptz/discord.py
 lava-lyra
-spotipy
 requests
 Pillow
 python-dotenv

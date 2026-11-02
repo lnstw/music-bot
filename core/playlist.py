@@ -14,17 +14,6 @@ def set_client_ref(client):
     global _client
     _client = client
 
-async def process_spotify_track(spotify_client, url: str) -> Optional[str]:
-    try:
-        track_id = url.split('track/')[1].split('?')[0]
-        track = await asyncio.to_thread(spotify_client.track, track_id)
-        artist_name = track['artists'][0]['name']
-        track_name = track['name']
-        return f"{track_name} {artist_name} audio"
-    except Exception as e:
-        logging.error(f"Spotify 處理錯誤: {e}")
-        return None
-    
 def get_platform(url: str) -> str:
     try:
         domain = urlparse(url).netloc.lower()
@@ -37,27 +26,6 @@ def get_platform(url: str) -> str:
     except:
         pass
     return 'youtube'
-
-async def process_spotify_album(spotify_client, url: str) -> list[str]:
-    try:
-        album_id = url.split('album/')[1].split('?')[0]
-        results = await asyncio.to_thread(spotify_client.album_tracks, album_id)
-        tracks = []
-        while results:
-            for track in results['items']:
-                if track['name'] and track['artists']:
-                    artist_name = track['artists'][0]['name']
-                    track_name = track['name']
-                    search_query = f"{track_name} {artist_name}".replace("&", "and")
-                    tracks.append(search_query)
-            if results['next']:
-                results = await asyncio.to_thread(spotify_client.next, results)
-            else:
-                break
-        return tracks
-    except Exception as e:
-        logging.error(f"Spotify 專輯處理錯誤: {e}")
-        return []
 
 async def send_playlist_results(interaction: discord.Interaction, added_tracklist: list[lava_lyra.Track], failed_tracklist: list, playlist_name: str):
     embed = discord.Embed(
@@ -184,29 +152,6 @@ async def process_playlist(
         logging.error(f"[process_playlist] 播放清單處理錯誤：{str(e)}")
         error_embed = create_error_embed(f"處理播放清單時發生錯誤：{str(e)}")
         await interaction.followup.send(embed=error_embed)
-
-async def process_spotify_playlist(spotify_client, url: str) -> list[str]:
-    try:
-        playlist_id = url.split('playlist/')[1].split('?')[0]
-        results = await asyncio.to_thread(spotify_client.playlist_tracks, playlist_id)
-        tracks = []
-        while results:
-            for item in results['items']:
-                if item and 'track' in item and item['track']:
-                    track = item['track']
-                    if track['name'] and track['artists']:
-                        artist_name = track['artists'][0]['name']
-                        track_name = track['name']
-                        search_query = f"{track_name} {artist_name} audio"
-                        tracks.append(search_query)
-            if results['next']:
-                results = await asyncio.to_thread(spotify_client.next, results)
-            else:
-                break
-        return tracks
-    except Exception as e:
-        logging.error(f"Spotify 播放清單處理錯誤: {e}")
-        return []
 
 async def process_url_playlist(player: CustomPlayer, url: str) -> list[str]:
     try:

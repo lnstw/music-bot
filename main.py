@@ -11,6 +11,7 @@ import lava_lyra
 from core.view import RefreshButton, opselect_view, CategorySelectView, CommandSelectView, CommandDetailView
 from core.embed import EMBED_COLORS, set_client_ref
 from core.player import CustomPlayer
+from core.thread import schedule_delete, cleanup_orphan_threads, remove_all_threads, ThreadDeleteView
 from core.config import config
 from core.log import setup_logging
 
@@ -23,7 +24,7 @@ class MusicClient(commands.Bot):
     def __init__(self, config_dict: dict):
         intents = discord.Intents.default()
         intents.message_content = True
-        super().__init__(command_prefix="!", intents=intents)
+        super().__init__(command_prefix=("p!", "P!"), intents=intents, help_command=None, case_insensitive=True)
         self.config = config_dict
         self.last_activity = {}
         self.auto_update_tasks: dict[str, asyncio.Task] = {}
@@ -141,6 +142,7 @@ class MusicClient(commands.Bot):
                                 await vc.destroy()
                             else:
                                 await vc.disconnect()
+                            schedule_delete(cur_channel.guild)
                             bye_embed = discord.Embed(
                                 title="👋 掰",
                                 description=f"",
@@ -173,6 +175,13 @@ class MusicClient(commands.Bot):
                 task.cancel()
             except Exception:
                 pass
+
+    async def close(self):
+        try:
+            await asyncio.wait_for(remove_all_threads(self), timeout=10)
+        except Exception as e:
+            logging.warning(f"關機時清除討論串失敗：{e}")
+        await super().close()
 
     async def setup_hook(self):
         await self.tree.sync()
@@ -221,6 +230,7 @@ class MusicClient(commands.Bot):
         self.add_view(CategorySelectView())
         self.add_view(CommandSelectView({}, {}, ""))
         self.add_view(CommandDetailView())
+        self.add_view(ThreadDeleteView())
 
         if not self.auto_update_status.is_running():
             self.auto_update_status.start() 
@@ -229,6 +239,7 @@ class MusicClient(commands.Bot):
         if not hasattr(self, '_lavalink_connected'):
             self._lavalink_connected = False
             asyncio.create_task(self._connect_lavalink())
+        asyncio.create_task(cleanup_orphan_threads(self))
 
 bot = MusicClient(config)
 set_client_ref(bot)
@@ -378,6 +389,8 @@ async def on_lyra_track_end(player: CustomPlayer, track: lava_lyra.Track, reason
         await player.on_track_finished(track)
     except Exception as e:
         logging.error(f"自動播放下一首時發生錯誤：{e}")
+    if player.current is None:
+        schedule_delete(player.guild)
 
 @bot.listen()
 async def on_lyra_track_exception(player: CustomPlayer, track: lava_lyra.Track, exception):
@@ -403,7 +416,8 @@ async def main():
     if token is None:
         raise RuntimeError("缺少環境變數 discord_bot_token")
     await load_all_extensions()
-    await bot.start(token)
+    async with bot:
+        await bot.start(token)
 
 if __name__ == "__main__":
     try:

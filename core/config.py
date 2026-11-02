@@ -1,7 +1,5 @@
 import os
 from dotenv import load_dotenv
-import spotipy
-from spotipy.oauth2 import SpotifyClientCredentials
 
 
 CONFIG_PATH = ".env"
@@ -10,8 +8,6 @@ CONFIG_KEYS = [
     "discord_user_id",
     "discord_guild_id",
     "discord_voice_channel_id",
-    "spotify_client_id",
-    "spotify_client_secret",
     "node_host",
     "node_port",
     "node_ssl",
@@ -23,8 +19,6 @@ discord_user_name="請填入你的discord名稱"
 discord_user_id=請填入你的discord_id
 discord_guild_id=請填入你的伺服器ID(建議是單獨機器人的群組,機器人掛著使用)
 discord_voice_channel_id=請填入你的語音頻道ID(機器人掛著使用)
-spotify_client_id=請填入你的client_id
-spotify_client_secret="請填入你的client_secret"
 node_host="請填入你的lavalink" host
 node_port=請填入你的lavalink port
 node_ssl=請填入是否啟用ssl(0/1)
@@ -65,7 +59,3 @@ def check_and_create_config():
     return config
 
 config = check_and_create_config()
-spotify = spotipy.Spotify(client_credentials_manager=SpotifyClientCredentials(
-    client_id=config["spotify_client_id"],
-    client_secret=config["spotify_client_secret"],
-))

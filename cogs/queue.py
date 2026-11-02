@@ -2,10 +2,9 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 from core.embed import create_error_embed, check_voice_state_and_respond, EMBED_COLORS
-from core.playlist import process_playlist, process_spotify_track, process_spotify_album, get_platform, process_spotify_playlist, process_youtube_playlist, process_url_playlist
+from core.playlist import process_playlist, get_platform, process_youtube_playlist, process_url_playlist
 from core.view import QueuePaginator
 from core.player import CustomPlayer
-from core.config import spotify
 import logging
 
 class Queue(commands.Cog):
@@ -146,12 +145,7 @@ class Queue(commands.Cog):
                 search_queries = []
                 try:
                     if platform == 'spotify':
-                        if 'playlist' in query.lower():
-                            search_queries = await process_spotify_playlist(spotify, query)
-                        elif 'album' in query.lower():
-                            search_queries = await process_spotify_album(spotify, query)
-                        if not search_queries:
-                            search_queries = await process_url_playlist(player, query)
+                        search_queries = await process_url_playlist(player, query)
                     elif platform == 'youtube':
                         if 'list=' in query:
                             search_queries = await process_youtube_playlist(player, query)
@@ -180,8 +174,7 @@ class Queue(commands.Cog):
             try:
                 if platform == 'spotify':
                     if 'track' in query.lower():
-                        search_query = await process_spotify_track(spotify, query)
-                        search_queries = [search_query or query]
+                        search_queries = [query]
                     else:
                         embed = discord.Embed(
                             title="⚠️ 不支援的功能",
