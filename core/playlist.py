@@ -17,7 +17,7 @@ def set_client_ref(client):
 async def process_spotify_track(spotify_client, url: str) -> Optional[str]:
     try:
         track_id = url.split('track/')[1].split('?')[0]
-        track = spotify_client.track(track_id)
+        track = await asyncio.to_thread(spotify_client.track, track_id)
         artist_name = track['artists'][0]['name']
         track_name = track['name']
         return f"{track_name} {artist_name} audio"
@@ -32,6 +32,8 @@ def get_platform(url: str) -> str:
             return 'youtube'
         elif 'spotify.com' in domain:
             return 'spotify'
+        elif 'music.apple.com' in domain:
+            return 'apple'
     except:
         pass
     return 'youtube'
@@ -39,14 +41,19 @@ def get_platform(url: str) -> str:
 async def process_spotify_album(spotify_client, url: str) -> list[str]:
     try:
         album_id = url.split('album/')[1].split('?')[0]
-        results = spotify_client.album_tracks(album_id)
+        results = await asyncio.to_thread(spotify_client.album_tracks, album_id)
         tracks = []
-        for track in results['items']:
-            if track['name'] and track['artists']:
-                artist_name = track['artists'][0]['name']
-                track_name = track['name']
-                search_query = f"{track_name} {artist_name}".replace("&", "and")
-                tracks.append(search_query)
+        while results:
+            for track in results['items']:
+                if track['name'] and track['artists']:
+                    artist_name = track['artists'][0]['name']
+                    track_name = track['name']
+                    search_query = f"{track_name} {artist_name}".replace("&", "and")
+                    tracks.append(search_query)
+            if results['next']:
+                results = await asyncio.to_thread(spotify_client.next, results)
+            else:
+                break
         return tracks
     except Exception as e:
         logging.error(f"Spotify 專輯處理錯誤: {e}")
@@ -132,22 +139,15 @@ async def process_playlist(
         progress_message = await interaction.followup.send(embed=progress_embed)
         original_url = search_queries[0] if search_queries else ""
         platform = get_platform(original_url)
-        queries = reversed(search_queries) if insert_next else search_queries
         player: CustomPlayer = interaction.guild.voice_client
-        queue_list = player.queue.get_queue() if hasattr(player.queue, 'get_queue') else []    
-        for index, query in enumerate(queries):
+        for index, query in enumerate(search_queries):
             try:
                 tracks = await player.get_tracks(query)
                 if tracks and tracks[0] is not None:
                     track = tracks[0]
                     track.requester = interaction.user   
                     if insert_next:
-                        if player and getattr(player.queue, 'is_looping', False):
-                            current_song = player.current
-                            insert_pos = queue_list.index(current_song) + 1 if current_song in queue_list else 0
-                        else:
-                            insert_pos = 0
-                        player.queue.put_at_index(insert_pos, track)
+                        player.queue.insert_next(track, offset=len(added_songs))
                     else:
                         player.queue.put(track)
                         
@@ -158,7 +158,7 @@ async def process_playlist(
                             await player.initialize_volume()
                         if player.is_paused:
                             await player.set_pause(False)
-                        await player.play_next()
+                        await player.play_if_idle()
                         first_song_added = True
                 else:
                     failed_songs.append(query)
@@ -188,7 +188,7 @@ async def process_playlist(
 async def process_spotify_playlist(spotify_client, url: str) -> list[str]:
     try:
         playlist_id = url.split('playlist/')[1].split('?')[0]
-        results = spotify_client.playlist_tracks(playlist_id)
+        results = await asyncio.to_thread(spotify_client.playlist_tracks, playlist_id)
         tracks = []
         while results:
             for item in results['items']:
@@ -200,12 +200,22 @@ async def process_spotify_playlist(spotify_client, url: str) -> list[str]:
                         search_query = f"{track_name} {artist_name} audio"
                         tracks.append(search_query)
             if results['next']:
-                results = spotify_client.next(results)
+                results = await asyncio.to_thread(spotify_client.next, results)
             else:
                 break
         return tracks
     except Exception as e:
         logging.error(f"Spotify 播放清單處理錯誤: {e}")
+        return []
+
+async def process_url_playlist(player: CustomPlayer, url: str) -> list[str]:
+    try:
+        result = await player.get_tracks(url)
+        if isinstance(result, lava_lyra.Playlist):
+            return [track.uri for track in result.tracks if track.uri]
+        return [track.uri for track in result or [] if getattr(track, 'uri', None)]
+    except Exception as e:
+        logging.error(f"播放清單載入錯誤: {e}")
         return []
 
 async def process_youtube_playlist(player: CustomPlayer, url: str) -> list[str]:

@@ -112,6 +112,15 @@ async def check_voice_state_and_respond(interaction: discord.Interaction) -> boo
         )
         await interaction.followup.send(f"{interaction.user.mention}",embed=embed)
         return False
+    vc = interaction.guild.voice_client if interaction.guild else None
+    if vc and vc.channel and interaction.user.voice.channel != vc.channel:
+        embed = discord.Embed(
+            title="❌ 錯誤",
+            description=f"請先加入機器人所在的語音頻道 {vc.channel.mention}",
+            color=EMBED_COLORS['error']
+        )
+        await interaction.followup.send(f"{interaction.user.mention}",embed=embed)
+        return False
     return True
 
 async def update_embed(target: discord.Message | discord.Interaction, embed: discord.Embed, view: discord.ui.View = None):

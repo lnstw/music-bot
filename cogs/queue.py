@@ -2,7 +2,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 from core.embed import create_error_embed, check_voice_state_and_respond, EMBED_COLORS
-from core.playlist import process_playlist, process_spotify_track, process_spotify_album, get_platform, process_spotify_playlist, process_youtube_playlist
+from core.playlist import process_playlist, process_spotify_track, process_spotify_album, get_platform, process_spotify_playlist, process_youtube_playlist, process_url_playlist
 from core.view import QueuePaginator
 from core.player import CustomPlayer
 from core.config import spotify
@@ -16,12 +16,12 @@ class Queue(commands.Cog):
     @qe.command(name="顯示", description="顯示目前的播放清單")
     async def queue(self, interaction: discord.Interaction):
         try:
+            await interaction.response.defer()
             if not interaction.guild.voice_client:
                 await interaction.followup.send("❌ 機器人不在語音頻道中！")
                 return
             player: CustomPlayer = interaction.guild.voice_client
-            await interaction.response.defer()
-            queue_list = player.queue.get_queue()
+            queue_list = player.queue.upcoming()
             current_song = player.current
             status_parts = []
             is_loop = player.queue.is_looping
@@ -44,11 +44,11 @@ class Queue(commands.Cog):
             await interaction.followup.send("❌ 機器人不在語音頻道中！")
             return
         player: CustomPlayer = interaction.guild.voice_client
-        if player.queue.is_empty:
+        if not player.queue.upcoming():
             await interaction.followup.send("❌ 播放清單（待播歌曲）已經是空的！")
             return
-        player.queue.clear()
-        is_looping = player.queue.loop_mode == lava_lyra.LoopMode.QUEUE
+        is_looping = player.queue.is_looping
+        player.queue.clear_upcoming()
         embed = discord.Embed(
             title="🗑️ 已清空播放清單",
             description="已成功移除所有後續的待播歌曲，當前播放的歌曲不會受到影響。",
@@ -72,35 +72,20 @@ class Queue(commands.Cog):
             return
             
         player: CustomPlayer = interaction.guild.voice_client
-        raw_queue = player.queue.get_queue() if hasattr(player.queue, 'get_queue') else list(player.queue)
-        actual_queue_list = list(raw_queue)
-        current_in_queue = False
-        display_queue = list(actual_queue_list)
-        if player.current and display_queue and display_queue[0].uri == player.current.uri:
-            display_queue.pop(0)
-            current_in_queue = True
+        display_queue = player.queue.upcoming()
         if not display_queue:
             await interaction.followup.send("❌ 播放清單是空的！")
             return
         if position < 1 or position > len(display_queue):
             await interaction.followup.send(f"❌ 無效的歌曲位置！目前待播中只有 1 ~ {len(display_queue)} 首歌曲。")
             return
-        removed_song = display_queue[position - 1]
-        actual_index = position if current_in_queue else (position - 1)
-        actual_queue_list.pop(actual_index)
-        player.queue.clear()
-        for track in actual_queue_list:
-            if hasattr(player.queue, 'put'):
-                player.queue.put(track)
-            else:
-                player.queue.append(track)
+        removed_song = player.queue.remove_upcoming(position)
         embed = discord.Embed(
             title="🗑️ 已移除歌曲",
             description=f"已從播放清單中移除第 `{position}` 首：\n[{removed_song.title}]({removed_song.uri})",
             color=EMBED_COLORS['success']
         )
-        is_looping = player.queue.loop_mode == lava_lyra.LoopMode.QUEUE
-        if is_looping:
+        if player.queue.is_looping:
             embed.set_footer(text="🔄 循環模式開啟中")
             
         await interaction.followup.send(embed=embed)
@@ -115,22 +100,13 @@ class Queue(commands.Cog):
             return
         guild_id = interaction.guild_id
         player: CustomPlayer = interaction.guild.voice_client
-        if player.queue.is_empty:
+        if not player.queue.upcoming():
             await interaction.followup.send("❌ 播放清單是空的！")
             return
-        if player.queue.is_looping:
-            current_song = player.current
-            queue_list = player.queue.get_queue()
-            if current_song in queue_list:
-                player.queue.remove(current_song)
-            player.queue.shuffle()
-            if current_song:
-                player.queue.put(current_song)
-        else:
-            player.queue.shuffle()
+        player.queue.shuffle_upcoming()
         embed = discord.Embed(
             title="🔀 已隨機排序播放清單",
-            description=f"已重新排序 {len(player.queue.get_queue())} 首歌曲",
+            description=f"已重新排序 {len(player.queue.upcoming())} 首歌曲",
             color=EMBED_COLORS['success']
         )
         if player.queue.is_looping:
@@ -148,11 +124,11 @@ class Queue(commands.Cog):
                 return
             guild_id = interaction.guild_id
             player: CustomPlayer = interaction.guild.voice_client
-            if player.queue.is_empty:
+            if not player.current:
                 commands = await self.bot.tree.fetch_commands()
                 cmd_dict = {cmd.name: cmd.id for cmd in commands}
-                cmd_id = cmd_dict.get("play", "00")
-                error_embed = discord.Embed(title="",description=f"請先使用</play:{cmd_id}>",color=EMBED_COLORS["error"])
+                cmd_id = cmd_dict.get("音樂", "00")
+                error_embed = discord.Embed(title="",description=f"請先使用</音樂 播放:{cmd_id}>",color=EMBED_COLORS["error"])
                 await interaction.followup.send(embed=error_embed)
                 return
             player._last_channel = interaction.channel
@@ -174,6 +150,8 @@ class Queue(commands.Cog):
                             search_queries = await process_spotify_playlist(spotify, query)
                         elif 'album' in query.lower():
                             search_queries = await process_spotify_album(spotify, query)
+                        if not search_queries:
+                            search_queries = await process_url_playlist(player, query)
                     elif platform == 'youtube':
                         if 'list=' in query:
                             search_queries = await process_youtube_playlist(player, query)
@@ -203,8 +181,7 @@ class Queue(commands.Cog):
                 if platform == 'spotify':
                     if 'track' in query.lower():
                         search_query = await process_spotify_track(spotify, query)
-                        if search_query:
-                            search_queries = [search_query]
+                        search_queries = [search_query or query]
                     else:
                         embed = discord.Embed(
                             title="⚠️ 不支援的功能",
@@ -239,7 +216,7 @@ class Queue(commands.Cog):
                 if tracks:
                     track = tracks[0]
                     track.requester = interaction.user
-                    player.queue.put_at_index(0, track)
+                    player.queue.insert_next(track)
                     
                     embed = discord.Embed(
                         title="⏭️ 已加入下一首播放",

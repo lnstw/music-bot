@@ -29,3 +29,5 @@ __pycache__/
 .local/*
 config.txt
 .cache
+
+nodeline.config.ts

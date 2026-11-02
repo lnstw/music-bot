@@ -2,7 +2,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 from core.embed import check_voice_state_and_respond, create_song_embed, create_error_embed, EMBED_COLORS, start_auto_update
-from core.playlist import process_playlist, process_spotify_track, process_spotify_album, get_platform, process_spotify_playlist, process_youtube_playlist
+from core.playlist import process_playlist, process_spotify_track, process_spotify_album, get_platform, process_spotify_playlist, process_youtube_playlist, process_url_playlist
 from core.view import MusicControlView
 from core.player import CustomPlayer
 from core.config import config, spotify
@@ -53,9 +53,13 @@ class Musicplay(commands.Cog):
                             search_queries = await process_spotify_playlist(spotify, query)
                         elif 'album' in query.lower():
                             search_queries = await process_spotify_album(spotify, query)
+                        if not search_queries:
+                            search_queries = await process_url_playlist(player, query)
                     elif platform == 'youtube':
                         if 'list=' in query:
                             search_queries = await process_youtube_playlist(player, query)
+                    elif platform == 'apple':
+                        search_queries = await process_url_playlist(player, query)
                     if not search_queries:
                         embed = discord.Embed(
                             title="❌ 無法處理播放清單",
@@ -100,8 +104,7 @@ class Musicplay(commands.Cog):
                                 search_queries = await process_spotify_album(spotify, query)
                             else:
                                 search_query = await process_spotify_track(spotify, query)
-                                if search_query:
-                                    search_queries = [search_query]
+                                search_queries = [search_query or query]
                         elif platform == 'youtube':
                             if 'playlist' in query.lower() or 'list=' in query:
                                 if interaction.guild.voice_client:
@@ -147,10 +150,9 @@ class Musicplay(commands.Cog):
                             track = tracks[0]
                             track.requester = interaction.user
                             player.queue.put(track)
-                            embed = create_song_embed(track, player.queue.count)
+                            embed = create_song_embed(track, len(player.queue.upcoming()))
                             await interaction.followup.send(embed=embed)
-                            if not player.is_playing:
-                                await player.play_next()
+                            if await player.play_if_idle():
                                 current_song = player.current
                                 if current_song:
                                     view = MusicControlView(current_song, player)
@@ -275,16 +277,7 @@ class Musicplay(commands.Cog):
         if not player.is_playing and not player.current:
             await interaction.followup.send("❌ 沒有歌曲正在播放！")
             return
-        queue_list = player.queue.get_queue() if hasattr(player.queue, 'get_queue') else list(player.queue)
-        next_track = None
-        if queue_list:
-            if player.current and queue_list[0].uri == player.current.uri:
-                if len(queue_list) > 1:
-                    next_track = queue_list[1]
-            else:
-                next_track = queue_list[0]
-        if not next_track and getattr(player.queue, 'is_looping', False):
-            next_track = player.current
+        next_track = player.queue.peek_upcoming()
         embed = discord.Embed(
             title="⏭️ 已跳過當前歌曲",
             color=EMBED_COLORS['success']
@@ -298,14 +291,13 @@ class Musicplay(commands.Cog):
         else:
             embed.description = "佇列中已無其他歌曲。"
         await interaction.followup.send(embed=embed)
-        if hasattr(player, 'skip'):
-            await player.skip()
-        else:
-            await player.stop()
+        await player.skip()
     #==音樂音量==
     @py.command(name="音量", description="調整音樂音量")
     async def volume(self, interaction: discord.Interaction, vol: int):
         await interaction.response.defer()
+        if not await check_voice_state_and_respond(interaction):
+            return
         player: CustomPlayer = interaction.guild.voice_client
         if not player:
             embed = discord.Embed(
@@ -356,15 +348,14 @@ class Musicplay(commands.Cog):
         if not player or not player.is_playing:
             await interaction.followup.send("❌ 沒有歌曲正在播放！")
             return
-        player.queue.set_loop_mode(player.queue.disable_loop() if player.queue.loop_mode else player.queue.set_loop_mode(lava_lyra.LoopMode.QUEUE)) 
-        status = "開啟" if player.queue.is_looping else "關閉"
+        status = "開啟" if player.toggle_loop() else "關閉"
         embed = discord.Embed(
             title="🔄 循環播放設置",
             description=f"循環播放已{status}",
             color=EMBED_COLORS['success']
         )
         if player.queue.is_looping:
-            total_songs = player.queue.count
+            total_songs = len(player.queue)
             embed.add_field(
                 name="循環清單",
                 value=f"目前共有 {total_songs} 首歌曲在循環播放中",

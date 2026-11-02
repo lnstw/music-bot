@@ -121,27 +121,26 @@ class MusicControlView(discord.ui.LayoutView):
         container = discord.ui.Container(self.section, self.action_row1, self.action_row2, accent_color=accent_color)
         self.add_item(container)
 
+    async def _get_player(self, interaction: discord.Interaction) -> CustomPlayer | None:
+        player = interaction.guild.voice_client
+        if not isinstance(player, CustomPlayer) or not player.current:
+            await interaction.edit_original_response(view=playend())
+            return None
+        return player
+
+    async def _refresh(self, interaction: discord.Interaction, player: CustomPlayer):
+        song = player.current if player else None
+        view = MusicControlView(song, player) if song else playend()
+        await interaction.edit_original_response(view=view)
+
     async def next_play(self, interaction: discord.Interaction):
         await interaction.response.defer()
         if not await check_voice_state_and_respond(interaction):
             return
-        if not interaction.guild.voice_client:
-            await interaction.followup.send("❌ 沒有歌曲正在播放！",silent=True)
-            return    
-        player: CustomPlayer = interaction.guild.voice_client
-        if not player.is_playing and not player.current:
-            await interaction.followup.send("❌ 沒有歌曲正在播放！",silent=True)
+        player = await self._get_player(interaction)
+        if not player:
             return
-        queue_list = player.queue.get_queue() if hasattr(player.queue, 'get_queue') else list(player.queue)
-        next_track = None
-        if queue_list:
-            if player.current and queue_list[0].uri == player.current.uri:
-                if len(queue_list) > 1:
-                    next_track = queue_list[1]
-            else:
-                next_track = queue_list[0]
-        if not next_track and getattr(player.queue, 'is_looping', False):
-            next_track = player.current
+        next_track = player.queue.peek_upcoming()
         embed = discord.Embed(
             title="⏭️ 已跳過當前歌曲",
             color=EMBED_COLORS['success']
@@ -154,58 +153,41 @@ class MusicControlView(discord.ui.LayoutView):
             )
         else:
             embed.description = "佇列中已無其他歌曲。"
+        await player.skip()
+        await self._refresh(interaction, player)
         await interaction.followup.send(embed=embed,silent=True)
-        if hasattr(player, 'skip'):
-            await player.skip()
-        else:
-            await player.stop()
 
     async def play_pause(self, interaction: discord.Interaction):
         await interaction.response.defer()
         if not await check_voice_state_and_respond(interaction):
             return
-        if not interaction.guild.voice_client:
-            await interaction.edit_original_response(content="❌ 沒有歌曲正在播放！", embed=None, view=None)
+        player = await self._get_player(interaction)
+        if not player:
             return
-        player: CustomPlayer = interaction.guild.voice_client
         if player.is_paused:
             await player.set_pause(False)
             embed = discord.Embed(
                 title="▶️ 已恢復播放",
                 color=EMBED_COLORS['success']
             )
-        elif player.is_playing:
+        else:
             await player.set_pause(True)
             embed = discord.Embed(
                 title="⏸️ 已暫停播放",
                 color=EMBED_COLORS['success']
             )
-        else:
-            embed = discord.Embed(
-                title="❌ 沒有歌曲正在播放！",
-                color=EMBED_COLORS['error']
-            )
-        guild_id = interaction.guild_id
-        song = player.current
-        view = MusicControlView(song, player)
-        await interaction.edit_original_response(embed=None, view=view)
+        await self._refresh(interaction, player)
         await interaction.followup.send(embed=embed,silent=True)
-    
+
     async def toggle_loop(self, interaction: discord.Interaction):
         await interaction.response.defer()
         if not await check_voice_state_and_respond(interaction):
             return
-        guild_id = interaction.guild_id
-        player: CustomPlayer = interaction.guild.voice_client
-        if player.queue.loop_mode == lava_lyra.LoopMode.QUEUE:
-            player.queue.set_loop_mode(lava_lyra.LoopMode.NONE)
-            status = "關閉"
-        else:
-            player.queue.set_loop_mode(lava_lyra.LoopMode.QUEUE)
-            status = "開啟"
-        song = player.current
-        view = MusicControlView(song, player)
-        await interaction.edit_original_response(embed=None, view=view)
+        player = await self._get_player(interaction)
+        if not player:
+            return
+        status = "開啟" if player.toggle_loop() else "關閉"
+        await self._refresh(interaction, player)
         embed = discord.Embed(
             title="🔁 循環模式設置",
             description=f"播放清單循環模式已{status}",
@@ -217,11 +199,13 @@ class MusicControlView(discord.ui.LayoutView):
         try:
             await interaction.response.defer()
             player: CustomPlayer = interaction.guild.voice_client
-            queue_list = player.queue.get_queue()
+            if not player:
+                await interaction.followup.send("❌ 機器人不在語音頻道中！",silent=True)
+                return
+            queue_list = player.queue.upcoming()
             current_song = player.current
             status_parts = []
-            is_queue_looping = player.queue.loop_mode == lava_lyra.LoopMode.QUEUE
-            if is_queue_looping:
+            if player.queue.is_looping:
                 status_parts.append("🔄 循環模式：開啟")
             paginator = QueuePaginator(interaction, queue_list, songs_per_page=10, current_song=current_song, status_parts=status_parts)
             embed = paginator.get_embed()
@@ -230,39 +214,29 @@ class MusicControlView(discord.ui.LayoutView):
             logging.error(f"顯示播放清單時發生錯誤：{str(e)}")
             error_embed = create_error_embed(f"顯示播放清單時發生錯誤：{str(e)}")
             await interaction.followup.send(embed=error_embed,silent=True)
-        
+
     async def shuffle_queue(self, interaction: discord.Interaction):
         await interaction.response.defer()
         if not await check_voice_state_and_respond(interaction):
             return
         player: CustomPlayer = interaction.guild.voice_client
-        if not player or player.queue.is_empty:
+        if not player or not player.queue.upcoming():
             await interaction.followup.send("❌ 播放清單是空的！",silent=True)
             return
-        if player.queue.is_looping:
-            current_song = player.current
-            player.queue.remove(current_song)
-            player.queue.shuffle()
-            player.queue.put_at_index(0, current_song)
-        else:
-            player.queue.shuffle()
-        
+        player.queue.shuffle_upcoming()
+
         embed = discord.Embed(
             title="🔀 已打亂播放清單",
             color=EMBED_COLORS['success']
         )
         await interaction.followup.send(embed=embed,silent=True)
-    
+
     async def Rewind(self, interaction: discord.Interaction):
         await interaction.response.defer()
         if not await check_voice_state_and_respond(interaction):
             return
-        if not interaction.guild.voice_client:
-            await interaction.edit_original_response(content="❌ 沒有歌曲正在播放！", embed=None, view=None)
-            return
-        player: CustomPlayer = interaction.guild.voice_client
-        if not player.is_playing:
-            await interaction.edit_original_response(content="❌ 沒有歌曲正在播放！", embed=None, view=None)
+        player = await self._get_player(interaction)
+        if not player:
             return
         new_position = max(int(player.position) - 10000, 0)
         await player.seek(new_position)
@@ -270,94 +244,58 @@ class MusicControlView(discord.ui.LayoutView):
             title="⏪ 已倒轉 10 秒",
             color=EMBED_COLORS['success']
         )
-        song = player.current
-        view = MusicControlView(song, player)
-        await interaction.edit_original_response(embed=None, view=view)
+        await self._refresh(interaction, player)
         await interaction.followup.send(embed=embed,silent=True)
-    
+
     async def forward(self, interaction: discord.Interaction):
         await interaction.response.defer()
         if not await check_voice_state_and_respond(interaction):
             return
-        if not interaction.guild.voice_client:
-            await interaction.edit_original_response(content="❌ 沒有歌曲正在播放！", embed=None, view=None)
-            return
-        player: CustomPlayer = interaction.guild.voice_client
-        if not player.is_playing:
-            await interaction.edit_original_response(content="❌ 沒有歌曲正在播放！", embed=None, view=None)
+        player = await self._get_player(interaction)
+        if not player:
             return
         song = player.current
-        new_position = min(int(player.position) + 10000, song.length * 1000)
+        new_position = min(int(player.position) + 10000, max(int(song.length) - 1000, 0))
         await player.seek(new_position)
         embed = discord.Embed(
             title="⏩ 已快轉 10 秒",
             color=EMBED_COLORS['success']
         )
-        song = player.current
-        view = MusicControlView(song, player)
-        await interaction.edit_original_response(embed=None, view=view)
+        await self._refresh(interaction, player)
+        await interaction.followup.send(embed=embed,silent=True)
+
+    async def _change_volume(self, interaction: discord.Interaction, delta: int):
+        await interaction.response.defer()
+        if not await check_voice_state_and_respond(interaction):
+            return
+        player = await self._get_player(interaction)
+        if not player:
+            return
+        new_volume = max(0, min(player.volume + delta, 150))
+        await player.set_volume(new_volume)
+        embed = discord.Embed(
+            title="🔊 音量增加" if delta > 0 else "🔊 音量減少",
+            description=f"音量已設置為 {new_volume}%",
+            color=EMBED_COLORS['success']
+        )
+        await self._refresh(interaction, player)
         await interaction.followup.send(embed=embed,silent=True)
 
     async def increase_volume(self, interaction: discord.Interaction):
-        await interaction.response.defer()
-        if not await check_voice_state_and_respond(interaction):
-            return
-        if not interaction.guild.voice_client:
-            await interaction.edit_original_response(content="❌ 沒有歌曲正在播放！", embed=None, view=None)
-            return
-        player: CustomPlayer = interaction.guild.voice_client
-        current_volume = player.volume
-        new_volume = min(current_volume + 5, 200)
-        await player.set_volume(new_volume)
-        embed = discord.Embed(
-            title="🔊 音量增加",
-            description=f"音量已設置為 {new_volume}%",
-            color=EMBED_COLORS['success']
-        )
-        song = player.current
-        view = MusicControlView(song, player)
-        await interaction.edit_original_response(embed=None, view=view)
-        await interaction.followup.send(embed=embed,silent=True)
-    
+        await self._change_volume(interaction, 5)
+
     async def decrease_volume(self, interaction: discord.Interaction):
-        await interaction.response.defer()
-        if not await check_voice_state_and_respond(interaction):
-            return
-        if not interaction.guild.voice_client:
-            await interaction.edit_original_response(content="❌ 沒有歌曲正在播放！", embed=None, view=None)
-            return
-        player: CustomPlayer = interaction.guild.voice_client
-        current_volume = player.volume
-        new_volume = max(current_volume - 5, 0)
-        await player.set_volume(new_volume)
-        embed = discord.Embed(
-            title="🔊 音量減少",
-            description=f"音量已設置為 {new_volume}%",
-            color=EMBED_COLORS['success']
-        )
-        song = player.current
-        view = MusicControlView(song, player)
-        await interaction.edit_original_response(embed=None, view=view)
-        await interaction.followup.send(embed=embed,silent=True)
+        await self._change_volume(interaction, -5)
 
     async def update_status(self, interaction: discord.Interaction):
         await interaction.response.defer()
-        if not interaction.guild.voice_client:
-            await interaction.edit_original_response(content="❌ 沒有連線到語音頻道！", embed=None, view=None)
+        player = await self._get_player(interaction)
+        if not player:
             return
-        
-        guild_id = interaction.guild_id
-        player: CustomPlayer = interaction.guild.voice_client
-        if not player or not player.is_playing:
-            view = playend()
-            await interaction.edit_original_response(view=view)
-            return
-
-        song = player.current
-        view = MusicControlView(song, player)
-        await interaction.edit_original_response(view=view)
+        await self._refresh(interaction, player)
 
     async def on_error(self, interaction: discord.Interaction, error: Exception, item: discord.ui.Item) -> None:
+        logging.error(f"控制器按鈕發生錯誤：{error!r}", exc_info=error)
         try:
             view = timeout()
             if not interaction.response.is_done():
@@ -389,7 +327,7 @@ class playend(discord.ui.LayoutView):
 class timeout(discord.ui.LayoutView):
     def __init__(self):
         super().__init__(timeout=None)
-        text_content = "# ⚠️ 按鈕已失效\n\n### 此互動已失敗或已過期，請重新使用 /musiccontrol 取得新的控制面板。"
+        text_content = "# ⚠️ 按鈕已失效\n\n### 此互動已失敗或已過期，請重新使用 /音樂 控制器 取得新的控制面板。"
         self.text_display = ui.TextDisplay(text_content)
         container = ui.Container(
             self.text_display, 
@@ -559,7 +497,11 @@ class LavalinkStatusView(discord.ui.View):
 
 class OpSelect(discord.ui.Select):
     def __init__(self, bot: commands.Bot, custom_options: list = None, placeholder: str = "選擇功能"):
-        
+        if not custom_options:
+            custom_options = [
+                discord.SelectOption(label="Lavalink 播放狀態", value="Lavalink 播放狀態"),
+                discord.SelectOption(label="更新機器人狀態", value="更新機器人狀態"),
+            ]
         super().__init__(
             placeholder=placeholder, 
             min_values=1, 
@@ -570,14 +512,17 @@ class OpSelect(discord.ui.Select):
         self.bot = bot
 
     async def callback(self, interaction: discord.Interaction):
+        if str(interaction.user.id) != str(self.bot.config.get("discord_user_id")).strip('"') and not await self.bot.is_owner(interaction.user):
+            await interaction.response.send_message("❌ 你沒有權限使用此功能", ephemeral=True)
+            return
         op_select = self.values[0]
         if op_select == "Lavalink 播放狀態":
             embeds = []
             for guild in self.bot.guilds:
                 if guild.voice_client and isinstance(guild.voice_client, CustomPlayer) and guild.voice_client.is_playing:
-                    player: CustomPlayer = interaction.guild.voice_client
+                    player: CustomPlayer = guild.voice_client
                     current_song = player.current
-                    queue_length = player.queue.count
+                    queue_length = len(player.queue.upcoming())
                     status_parts = []
                     if player.queue.is_looping:
                         status_parts.append("🔄循環")
@@ -606,13 +551,7 @@ class OpSelect(discord.ui.Select):
                 view = LavalinkStatusView(embeds)
                 await interaction.response.send_message(embed=view.format_embed(), view=view, ephemeral=True)
         if op_select == "更新機器人狀態":
-            for guild in self.bot.guilds:
-                if guild.voice_client and isinstance(guild.voice_client, CustomPlayer) and guild.voice_client.is_playing:
-                    player: CustomPlayer = interaction.guild.voice_client
-                    current_song = player.current
-                    if current_song:
-                        await interaction.response.send_message("✅ 已更新音樂機器人狀態顯示", ephemeral=True)
-                        return
+            await self.bot.auto_update_status()
             await interaction.response.send_message("✅ 已更新音樂機器人狀態顯示", ephemeral=True)
 
 class RefreshButton(discord.ui.View):
@@ -711,7 +650,7 @@ HELP_CATEGORIES = {
             {
                 "path": "音樂 循環",
                 "description": "切換循環播放模式",
-                "usage": "使用方法: `/循環`",
+                "usage": "使用方法: `/音樂 循環`",
             }
         ],
     },
@@ -753,11 +692,6 @@ HELP_CATEGORIES = {
                 "description": "將機器人從語音頻道中踢出",
                 "usage": "使用方法: `/機器人 離開`",
             },
-            {
-                "path": "機器人 重載",
-                "description": "重載機器人",
-                "usage": "使用方法: `/機器人 重載`",
-            }
         ]
     },
     "other": {
@@ -774,14 +708,9 @@ HELP_CATEGORIES = {
                 "usage": "使用方法: `/邀請機器人`",
             },
             {
-                "path": "現正播放訊息",
-                "description": "開啟/關閉目前歌曲的提示訊息",
-                "usage": "使用方法: `/現正播放訊息`",
-            },
-            {
                 "path": "隨機圖",
                 "description": "可以隨機給你一張圖片",
-                "usage": "使用方法: `/隨機圖 [標籤(可選)]`",
+                "usage": "使用方法: `/隨機圖`",
             },
             {
                 "path": "停止",
@@ -827,7 +756,7 @@ class CategorySelect(discord.ui.Select):
         options = [
             discord.SelectOption(label="🎵 音樂播放", description="查看基本播放命令", value="music"),
             discord.SelectOption(label="🧾 播放清單控制", description="管理播放清單", value="queue"),
-            discord.SelectOption(label="🤖 機器人控制", description="踢出,重載機器人", value="bot"),
+            discord.SelectOption(label="🤖 機器人控制", description="讓機器人離開語音頻道", value="bot"),
             discord.SelectOption(label="🤖 其他", description="其他功能", value="other")
         ]
         super().__init__(placeholder="選擇一個分類...", options=options, custom_id="category_select")
@@ -899,6 +828,13 @@ class CommandSelect(discord.ui.Select):
     async def callback(self, interaction: discord.Interaction):
         cmd_path = self.values[0]
         command_info = next((item for item in self.commands_info if item["path"] == cmd_path), None)
+        if not command_info:
+            command_info = next((item for category in HELP_CATEGORIES.values() for item in category["commands"] if item["path"] == cmd_path), None)
+        if not self.command_ids:
+            try:
+                self.command_ids = build_command_id_lookup(await interaction.client.tree.fetch_commands())
+            except Exception:
+                pass
         if not command_info:
             await interaction.response.send_message("找不到該命令。", ephemeral=True)
             return

@@ -1,4 +1,5 @@
 import discord
+from discord import app_commands
 from discord.ext import commands
 import asyncio
 import logging
@@ -8,7 +9,7 @@ from discord.ext import tasks
 import lava_lyra
 
 from core.view import RefreshButton, opselect_view, CategorySelectView, CommandSelectView, CommandDetailView
-from core.embed import EMBED_COLORS
+from core.embed import EMBED_COLORS, set_client_ref
 from core.player import CustomPlayer
 from core.config import config
 from core.log import setup_logging
@@ -53,8 +54,6 @@ class MusicClient(commands.Bot):
                 if guild_id in self.last_activity:
                     del self.last_activity[guild_id]
                 logging.info(f"已重置閒置伺服器 (ID: {guild_id}) 的播放清單和當前歌曲")
-        self.status_index = 0
-
     def generate_status_list(self) -> list[str]:
         guild_count = len(self.guilds)
         user_count = sum(g.member_count or 0 for g in self.guilds)
@@ -138,7 +137,10 @@ class MusicClient(commands.Bot):
                         self.user in cur_channel.members):
                         vc = cur_channel.guild.voice_client
                         if vc:
-                            await vc.disconnect()
+                            if isinstance(vc, CustomPlayer):
+                                await vc.destroy()
+                            else:
+                                await vc.disconnect()
                             bye_embed = discord.Embed(
                                 title="👋 掰",
                                 description=f"",
@@ -147,7 +149,7 @@ class MusicClient(commands.Bot):
                             await send_message_to_last_channel(guild_id=guild_id, embed=bye_embed)
                             if guild_id in self.queues:
                                 self.queues[guild_id].clear()
-                            await self.update_presence()
+                            await self.update_presence(subtitle="使用 /help 查看幫助")
             finally:
                 self.empty_channel_timers.pop(channel_id, None)
                 task_key = f"empty_{channel_id}"
@@ -177,6 +179,13 @@ class MusicClient(commands.Bot):
         logging.info("命令已同步！")
     
     async def _connect_lavalink(self):
+        while not self._lavalink_connected:
+            await self._try_connect_lavalink()
+            if not self._lavalink_connected:
+                logging.warning("Lavalink 連線失敗，30 秒後重試")
+                await asyncio.sleep(30)
+
+    async def _try_connect_lavalink(self):
         try:
             host = self.config.get("node_host", "").strip('"')
             port = int(self.config.get("node_port", 443))
@@ -222,6 +231,7 @@ class MusicClient(commands.Bot):
             asyncio.create_task(self._connect_lavalink())
 
 bot = MusicClient(config)
+set_client_ref(bot)
 
 def resolve_extension_name(ext: str) -> str:
     if ext.startswith("cogs."):
@@ -264,8 +274,28 @@ async def on_message(message: discord.Message):
         pass
     await bot.process_commands(message)
 
+async def is_bot_owner(interaction: discord.Interaction) -> bool:
+    if str(interaction.user.id) == str(config.get("discord_user_id")).strip('"'):
+        return True
+    return await bot.is_owner(interaction.user)
+
+@bot.tree.error
+async def on_app_command_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
+    if isinstance(error, app_commands.CheckFailure):
+        message = "❌ 你沒有權限使用此指令"
+    else:
+        logging.error(f"指令執行錯誤：{error!r}", exc_info=error)
+        message = f"❌ 指令執行時發生錯誤：{error}"
+    try:
+        if interaction.response.is_done():
+            await interaction.followup.send(message, ephemeral=True)
+        else:
+            await interaction.response.send_message(message, ephemeral=True)
+    except Exception:
+        pass
+
 @bot.tree.command(name="load", description="載入 Cog 模組")
-@commands.is_owner()
+@app_commands.check(is_bot_owner)
 async def load(interaction: discord.Interaction, extension: str):
     ext = resolve_extension_name(extension)
     try:
@@ -276,7 +306,7 @@ async def load(interaction: discord.Interaction, extension: str):
         await interaction.response.send_message(f"載入失敗: {e}", ephemeral=True)
 
 @bot.tree.command(name="unload", description="卸載 Cog 模組")
-@commands.is_owner()
+@app_commands.check(is_bot_owner)
 async def unload(interaction: discord.Interaction, extension: str):
     ext = resolve_extension_name(extension)
     try:
@@ -287,7 +317,7 @@ async def unload(interaction: discord.Interaction, extension: str):
         await interaction.response.send_message(f"卸載失敗: {e}", ephemeral=True)
 
 @bot.tree.command(name="reload", description="重新載入 Cog 模組")
-@commands.is_owner()
+@app_commands.check(is_bot_owner)
 async def reload(interaction: discord.Interaction, extension: str):
     ext = resolve_extension_name(extension)
     try:
@@ -298,7 +328,7 @@ async def reload(interaction: discord.Interaction, extension: str):
         await interaction.response.send_message(f"重新載入失敗: {e}", ephemeral=True)
 
 @bot.tree.command(name="list_cogs", description="查看已載入的 Cogs")
-@commands.is_owner()
+@app_commands.check(is_bot_owner)
 async def list_cogs(interaction: discord.Interaction):
     loaded_exts = list(bot.extensions.keys())
     if not loaded_exts:
@@ -319,11 +349,8 @@ async def list_cogs(interaction: discord.Interaction):
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
 @bot.tree.command(name="開發者命令", description="開發者命令")
-@commands.is_owner()
+@app_commands.check(is_bot_owner)
 async def 開發者命令(interaction: discord.Interaction):
-    if interaction.user.id != int(config.get("discord_user_id")):
-        await interaction.response.send_message("❌ 你沒有權限使用此指令", ephemeral=True)
-        return
     view = opselect_view(bot)
     await interaction.response.send_message("請選擇功能", view=view, ephemeral=True)
 
@@ -343,7 +370,22 @@ async def load_all_extensions():
 
 @bot.listen()
 async def on_lyra_track_end(player: CustomPlayer, track: lava_lyra.Track, reason: str):
-    await player.play_next()
+    normalized = (reason or "").replace("_", "").lower()
+    logging.info(f"[track_end] guild={player.guild.id} reason={reason} track={track.title if track else None}")
+    if normalized not in ("finished", "loadfailed"):
+        return
+    try:
+        await player.on_track_finished(track)
+    except Exception as e:
+        logging.error(f"自動播放下一首時發生錯誤：{e}")
+
+@bot.listen()
+async def on_lyra_track_exception(player: CustomPlayer, track: lava_lyra.Track, exception):
+    logging.warning(f"[track_exception] guild={player.guild.id} track={track.title if track else None} error={exception!r}")
+
+@bot.listen()
+async def on_lyra_track_stuck(player: CustomPlayer, track: lava_lyra.Track, threshold):
+    logging.warning(f"[track_stuck] guild={player.guild.id} track={track.title if track else None} threshold={threshold}ms")
 
 @bot.event
 async def on_voice_state_update(member: discord.Member, before: discord.VoiceState, after: discord.VoiceState):

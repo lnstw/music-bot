@@ -41,9 +41,7 @@ class Other(commands.Cog):
             return
         player: CustomPlayer = interaction.guild.voice_client
         
-        if player.is_playing:
-            await player.set_pause(True)
-        player.queue.clear()
+        await player.stop_and_clear()
         embed = discord.Embed(
             title="⏹️ 已停止播放",
             description="已清空播放清單並關閉循環模式",
