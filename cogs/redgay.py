@@ -35,17 +35,9 @@ class Redgay(commands.Cog):
                 image_bytes = await image_response.read()
                 embed_color = await color_task
                 elapsed = (end_time - start_time).total_seconds()
-                embed = discord.Embed(
-                    title="隨機圖",
-                    color=embed_color,
-                    description=f"提示詞: {tag}",
-                )
                 file = discord.File(BytesIO(image_bytes), filename="image.jpg")
-                embed.set_image(url="attachment://image.jpg")
-                embed.set_footer(text=f"回應時間: {elapsed:.2f}s")
-                embed.timestamp = datetime.datetime.now()
-                view = RefreshButton(image_url=image_url)
-                await interaction.followup.send(embed=embed, view=view, file=file)
+                view = RefreshButton(image_url=image_url, tag=tag, elapsed=elapsed, color=embed_color)
+                await interaction.followup.send(view=view, file=file)
 
 
 async def setup(bot: commands.Bot):

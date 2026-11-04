@@ -45,7 +45,6 @@ def create_song_embed(track: lava_lyra.Track, position: int) -> discord.Embed:
     requester_str = track.requester.mention if track.requester else "未知用戶"
     embed.add_field(name="請求者", value=requester_str, inline=True)
     embed.add_field(name="位置", value=f"#{position}", inline=True)
-    embed.add_field(name="平台", value=track._search_type.value.title(), inline=True)
     embed.set_footer(text=f"好聽嗎? • 目前清單長度：{position}")
     return embed
 
@@ -176,70 +175,73 @@ class playend(discord.ui.LayoutView):
         )
         self.add_item(container)
 
+async def _find_player(guild_id: int) -> CustomPlayer | None:
+    for attempt in range(4):
+        guild = _client.get_guild(guild_id) if _client else None
+        player = guild.voice_client if guild else None
+        if isinstance(player, CustomPlayer) and player.current is not None:
+            return player
+        if attempt < 3:
+            await asyncio.sleep(2)
+    return None
+
 async def start_auto_update(
     guild_id: int,
     vc: CustomPlayer,
     message: discord.Message,
 ):
+    from core.thread import is_active_controller
     old_task = _client.auto_update_tasks.get(guild_id) if _client else None
     if old_task and not old_task.done():
         old_task.cancel()
-    
+
     async def auto_update():
         consecutive_errors = 0
-        max_consecutive_errors = 3
+        max_consecutive_errors = 5
         try:
             while True:
                 try:
-                    await asyncio.sleep(20)
-                    if not vc or not vc.is_playing:
+                    await asyncio.sleep(15)
+                    if not is_active_controller(guild_id, message.id):
+                        logging.info(f"[AutoUpdate] Guild {guild_id}: 控制器已被取代，停止更新")
+                        break
+                    player = await _find_player(guild_id)
+                    if player is None:
                         logging.info(f"[AutoUpdate] Guild {guild_id}: 播放已停止")
                         try:
                             await message.edit(view=playend())
                         except (discord.NotFound, discord.Forbidden):
                             pass
-                        schedule_delete(message.guild)
-                        break
-                    song = vc.current
-                    if not song:
-                        logging.warning(f"[AutoUpdate] Guild {guild_id}: 無法取得目前歌曲")
-                        try:
-                            await message.edit(view=playend())
-                        except (discord.NotFound, discord.Forbidden):
-                            pass
+                        guild = _client.get_guild(guild_id) if _client else None
+                        schedule_delete(guild)
                         break
                     from core.view import MusicControlView
-                    updated_view = MusicControlView(song, vc)
                     try:
-                        await message.edit(view=updated_view)
+                        await message.edit(view=MusicControlView(player.current, player))
                         consecutive_errors = 0
-                        logging.debug(f"[AutoUpdate] Guild {guild_id}: 成功更新消息")
                     except discord.NotFound:
                         logging.warning(f"[AutoUpdate] Guild {guild_id}: 消息已被刪除")
                         break
                     except discord.Forbidden:
                         logging.warning(f"[AutoUpdate] Guild {guild_id}: 權限不足")
                         break
-                        
                 except asyncio.CancelledError:
                     logging.info(f"[AutoUpdate] Guild {guild_id}: 任務被取消")
                     break
                 except Exception as e:
                     consecutive_errors += 1
                     logging.error(f"[AutoUpdate] Guild {guild_id}: 更新錯誤 ({consecutive_errors}/{max_consecutive_errors})：{e}")
-                    
                     if consecutive_errors >= max_consecutive_errors:
                         logging.error(f"[AutoUpdate] Guild {guild_id}: 達到最大錯誤次數，停止更新")
                         break
                     await asyncio.sleep(5)
-                    
         except Exception as e:
             logging.error(f"[AutoUpdate] Guild {guild_id}: 致命錯誤：{e}")
         finally:
             if _client and _client.auto_update_tasks.get(guild_id) is asyncio.current_task():
                 del _client.auto_update_tasks[guild_id]
             logging.info(f"[AutoUpdate] Guild {guild_id}: 自動更新任務結束")
-    
+
     task = asyncio.create_task(auto_update())
     if _client:
         _client.auto_update_tasks[guild_id] = task

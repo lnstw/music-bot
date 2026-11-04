@@ -2,7 +2,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 from core.embed import check_voice_state_and_respond, EMBED_COLORS
-from core.view import CategorySelectView
+from core.view import HelpView
 from core.player import CustomPlayer
 from core.thread import schedule_delete
 
@@ -13,13 +13,9 @@ class Other(commands.Cog):
     
     @app_commands.command(name="help", description="顯示指令說明")
     async def help(self, interaction: discord.Interaction):
-        view = CategorySelectView()
-        embed = discord.Embed(
-            title="📚 命令幫助",
-            description="請從下方選單選擇一個分類以查看相關命令",
-            color=discord.Color.green()
-        )
-        await interaction.response.send_message(embed=embed, view=view)
+        view = HelpView(interaction.user.id)
+        await interaction.response.send_message(view=view)
+        view.message = await interaction.original_response()
 
 
     @app_commands.command(name="ping", description="檢查機器人延遲")

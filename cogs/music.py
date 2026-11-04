@@ -1,11 +1,12 @@
 import discord
 from discord import app_commands
 from discord.ext import commands
-from core.embed import check_voice_state_and_respond, create_song_embed, create_error_embed, EMBED_COLORS, start_auto_update
+from core.embed import check_voice_state_and_respond, create_song_embed, create_error_embed, EMBED_COLORS
 from core.playlist import process_playlist, get_platform, process_youtube_playlist, process_url_playlist
-from core.view import MusicControlView
+from core.controller import send_controller, refresh_controller
 from core.player import CustomPlayer
 from core.config import config
+from core import channels
 import lava_lyra
 import logging
 
@@ -73,6 +74,7 @@ class Musicplay(commands.Cog):
                     else:
                         player: CustomPlayer = interaction.guild.voice_client
                     player._last_channel = interaction.channel
+                    channels.remember(interaction.guild.id, interaction.channel.id)
                     await process_playlist(interaction=interaction, search_queries=search_queries, playlist_name="播放清單")
                 except Exception as e:
                     logging.error(f"處理播放清單時發生錯誤: {e}")
@@ -132,6 +134,7 @@ class Musicplay(commands.Cog):
                     else:
                         player: CustomPlayer = interaction.guild.voice_client
                     player._last_channel = interaction.channel
+                    channels.remember(interaction.guild.id, interaction.channel.id)
                     await player.initialize_volume()
                     try:
                         tracks = await player.get_tracks(search_queries[0])
@@ -142,11 +145,7 @@ class Musicplay(commands.Cog):
                             embed = create_song_embed(track, len(player.queue.upcoming()))
                             await interaction.followup.send(embed=embed)
                             if await player.play_if_idle():
-                                current_song = player.current
-                                if current_song:
-                                    view = MusicControlView(current_song, player)
-                                    message = await interaction.followup.send(view=view)
-                                    await start_auto_update(interaction.guild_id, player, message)
+                                await send_controller(interaction, player)
                         else:
                             embed = discord.Embed(
                                 title="❌ 無法找到歌曲",
@@ -181,7 +180,7 @@ class Musicplay(commands.Cog):
             await interaction.followup.send(embed=embed)
             return
         player: CustomPlayer = interaction.guild.voice_client
-        if not player.is_playing:
+        if not player.has_track:
             embed = discord.Embed(
                 title="❌ 無法暫停",
                 description="目前沒有播放任何歌曲",
@@ -190,21 +189,14 @@ class Musicplay(commands.Cog):
             await interaction.followup.send(embed=embed)
             return
         try:
-            if player.is_paused:
-                embed = discord.Embed(
-                    title="⚠️ 已經暫停",
-                    description="音樂已經處於暫停狀態",
-                    color=EMBED_COLORS['warning']
-                )
-                await interaction.followup.send(embed=embed)
-                return
-            await player.set_pause(True)
+            changed = await player.apply_pause(True)
             embed = discord.Embed(
                 title="⏸️ 已暫停",
-                description="音樂已暫停播放",
+                description="音樂已暫停播放" if changed else "音樂已是暫停狀態，已重新同步暫停",
                 color=EMBED_COLORS['success']
             )
             await interaction.followup.send(embed=embed)
+            await refresh_controller(player)
         except Exception as e:
             logging.error(f"暫停時發生錯誤：{e}")
             embed = create_error_embed(f"暫停時時發生錯誤：{str(e)}")
@@ -224,7 +216,7 @@ class Musicplay(commands.Cog):
             await interaction.followup.send(embed=embed)
             return
         player: CustomPlayer = interaction.guild.voice_client
-        if not player.is_playing:
+        if not player.has_track:
             embed = discord.Embed(
                 title="❌ 無法繼續播放",
                 description="目前沒有播放任何歌曲",
@@ -233,21 +225,14 @@ class Musicplay(commands.Cog):
             await interaction.followup.send(embed=embed)
             return
         try:
-            if not player.is_paused:
-                embed = discord.Embed(
-                    title="⚠️ 已在播放中",
-                    description="音樂已經在播放中",
-                    color=EMBED_COLORS['warning']
-                )
-                await interaction.followup.send(embed=embed)
-                return
-            await player.set_pause(False)
+            changed = await player.apply_pause(False)
             embed = discord.Embed(
                 title="▶️ 繼續播放",
-                description="音樂已繼續播放",
+                description="音樂已繼續播放" if changed else "音樂已在播放中，已重新同步播放狀態",
                 color=EMBED_COLORS['success']
             )
             await interaction.followup.send(embed=embed)
+            await refresh_controller(player)
         except Exception as e:
             logging.error(f"繼續播放時發生錯誤：{e}")
             embed = create_error_embed(f"繼續播放時發生錯誤：{str(e)}")
@@ -263,7 +248,7 @@ class Musicplay(commands.Cog):
             await interaction.followup.send("❌ 沒有歌曲正在播放！")
             return    
         player: CustomPlayer = interaction.guild.voice_client
-        if not player.is_playing and not player.current:
+        if not player.has_track:
             await interaction.followup.send("❌ 沒有歌曲正在播放！")
             return
         next_track = player.queue.peek_upcoming()
@@ -281,6 +266,7 @@ class Musicplay(commands.Cog):
             embed.description = "佇列中已無其他歌曲。"
         await interaction.followup.send(embed=embed)
         await player.skip()
+        await refresh_controller(player)
     #==音樂音量==
     @py.command(name="音量", description="調整音樂音量")
     async def volume(self, interaction: discord.Interaction, vol: int):
@@ -319,13 +305,10 @@ class Musicplay(commands.Cog):
         if not await check_voice_state_and_respond(interaction):
             return
         player: CustomPlayer = interaction.guild.voice_client
-        if not player or not player.is_playing:
+        if not player or not player.has_track:
             await interaction.followup.send("❌ 沒有歌曲正在播放！")
             return
-        song = player.current
-        view = MusicControlView(song, player)
-        message = await interaction.followup.send(view=view)
-        await start_auto_update(interaction.guild_id, player, message)
+        await send_controller(interaction, player)
     #==循環模式==
     @py.command(name="循環", description="切換循環播放模式")
     async def loop(self, interaction: discord.Interaction):
@@ -334,7 +317,7 @@ class Musicplay(commands.Cog):
         if not await check_voice_state_and_respond(interaction):
                 return
         player: CustomPlayer = interaction.guild.voice_client
-        if not player or not player.is_playing:
+        if not player or not player.has_track:
             await interaction.followup.send("❌ 沒有歌曲正在播放！")
             return
         status = "開啟" if player.toggle_loop() else "關閉"

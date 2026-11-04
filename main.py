@@ -8,10 +8,12 @@ import os
 from discord.ext import tasks
 import lava_lyra
 
-from core.view import RefreshButton, opselect_view, CategorySelectView, CommandSelectView, CommandDetailView
+from core.view import ExpiredView, expired_embed, RefreshButton, opselect_view
 from core.embed import EMBED_COLORS, set_client_ref
 from core.player import CustomPlayer
 from core.thread import schedule_delete, cleanup_orphan_threads, remove_all_threads, ThreadDeleteView
+from core import channels
+from core.controller import refresh_controller, end_controller
 from core.config import config
 from core.log import setup_logging
 
@@ -32,7 +34,6 @@ class MusicClient(commands.Bot):
         self.status_index = 0
         self.empty_channel_timers: dict[int, dict] = {}
         self.queues: dict[int, list] = {}
-        self.last_channels: dict[int, int] = {}
 
     @tasks.loop(minutes=1)
     async def check_inactive_guilds(self):
@@ -149,6 +150,7 @@ class MusicClient(commands.Bot):
                                 color=EMBED_COLORS['success']
                             )
                             await send_message_to_last_channel(guild_id=guild_id, embed=bye_embed)
+                            channels.forget(guild_id)
                             if guild_id in self.queues:
                                 self.queues[guild_id].clear()
                             await self.update_presence(subtitle="使用 /help 查看幫助")
@@ -227,9 +229,6 @@ class MusicClient(commands.Bot):
         logging.info(f'已登入為 {self.user}')
         self.add_view(RefreshButton())
         self.add_view(opselect_view(self))
-        self.add_view(CategorySelectView())
-        self.add_view(CommandSelectView({}, {}, ""))
-        self.add_view(CommandDetailView())
         self.add_view(ThreadDeleteView())
 
         if not self.auto_update_status.is_running():
@@ -255,35 +254,38 @@ def resolve_extension_name(ext: str) -> str:
     return ext
 
 async def send_message_to_last_channel(guild_id: int, message: str = None, embed: discord.Embed = None):
-    if guild_id in bot.last_channels:
-        guild = bot.get_guild(guild_id)
-        if guild:
-            channel = guild.get_channel(bot.last_channels[guild_id])
-            if channel:
-                try:
-                    if embed:
-                        await channel.send(embed=embed)
-                    elif message:
-                        await channel.send(message)
-                except Exception as e:
-                    logging.error(f"發送訊息時發生錯誤: {e}")
+    guild = bot.get_guild(guild_id)
+    if guild is None:
+        return
+    if embed:
+        await channels.notify(guild, embed=embed)
+    elif message:
+        await channels.notify(guild, content=message)
+
+def _is_expired_component(interaction: discord.Interaction) -> bool:
+    message = interaction.message
+    if message is None or message.author.id != bot.user.id:
+        return False
+    data = interaction.data or {}
+    custom_id = data.get("custom_id")
+    component_type = data.get("component_type")
+    if custom_id is None or component_type is None:
+        return False
+    views = bot._connection._view_store._views
+    key = (component_type, custom_id)
+    return key not in views.get(message.id, {}) and key not in views.get(None, {})
 
 @bot.event
 async def on_interaction(interaction: discord.Interaction):
     try:
-        if interaction.guild and interaction.channel_id:
-            bot.last_channels[interaction.guild.id] = interaction.channel_id
-    except Exception:
-        pass
-
-@bot.event
-async def on_message(message: discord.Message):
-    try:
-        if message.guild and not message.author.bot:
-            bot.last_channels[message.guild.id] = message.channel.id
-    except Exception:
-        pass
-    await bot.process_commands(message)
+        if interaction.type != discord.InteractionType.component or not _is_expired_component(interaction):
+            return
+        if interaction.message.flags.components_v2:
+            await interaction.response.edit_message(view=ExpiredView())
+        else:
+            await interaction.response.edit_message(embed=expired_embed(), view=None)
+    except Exception as e:
+        logging.warning(f"處理過期物件失敗：{e}")
 
 async def is_bot_owner(interaction: discord.Interaction) -> bool:
     if str(interaction.user.id) == str(config.get("discord_user_id")).strip('"'):
@@ -363,7 +365,7 @@ async def list_cogs(interaction: discord.Interaction):
 @app_commands.check(is_bot_owner)
 async def 開發者命令(interaction: discord.Interaction):
     view = opselect_view(bot)
-    await interaction.response.send_message("請選擇功能", view=view, ephemeral=True)
+    await interaction.response.send_message(view=view, ephemeral=True)
 
 
 async def load_all_extensions():
@@ -390,7 +392,10 @@ async def on_lyra_track_end(player: CustomPlayer, track: lava_lyra.Track, reason
     except Exception as e:
         logging.error(f"自動播放下一首時發生錯誤：{e}")
     if player.current is None:
+        await end_controller(player.guild)
         schedule_delete(player.guild)
+    else:
+        await refresh_controller(player)
 
 @bot.listen()
 async def on_lyra_track_exception(player: CustomPlayer, track: lava_lyra.Track, exception):
@@ -400,16 +405,31 @@ async def on_lyra_track_exception(player: CustomPlayer, track: lava_lyra.Track, 
 async def on_lyra_track_stuck(player: CustomPlayer, track: lava_lyra.Track, threshold):
     logging.warning(f"[track_stuck] guild={player.guild.id} track={track.title if track else None} threshold={threshold}ms")
 
+async def _resync_after_move(player: CustomPlayer):
+    for delay in (1.5, 4):
+        await asyncio.sleep(delay)
+        if player.guild.voice_client is not player:
+            return
+        await player.resync_pause()
+
 @bot.event
 async def on_voice_state_update(member: discord.Member, before: discord.VoiceState, after: discord.VoiceState):
-    if before.channel is None or after.channel == before.channel:
+    if before.channel == after.channel:
         return
-    if before.channel and bot.user in before.channel.members:
-        channel = before.channel
-        if len(channel.members) == 1:
-            await bot.start_empty_channel_timer(channel)
-        else:
-            bot.cancel_empty_channel_timer(channel.id)
+    if member.id == bot.user.id:
+        if before.channel:
+            bot.cancel_empty_channel_timer(before.channel.id)
+        if before.channel and after.channel:
+            player = member.guild.voice_client
+            if isinstance(player, CustomPlayer):
+                asyncio.create_task(_resync_after_move(player))
+        if after.channel and len(after.channel.members) == 1:
+            await bot.start_empty_channel_timer(after.channel)
+        return
+    if before.channel and bot.user in before.channel.members and len(before.channel.members) == 1:
+        await bot.start_empty_channel_timer(before.channel)
+    if after.channel and bot.user in after.channel.members and len(after.channel.members) > 1:
+        bot.cancel_empty_channel_timer(after.channel.id)
 
 async def main():
     token = os.getenv("discord_bot_token")

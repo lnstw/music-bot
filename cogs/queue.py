@@ -6,6 +6,7 @@ from core.playlist import process_playlist, get_platform, process_youtube_playli
 from core.view import QueuePaginator
 from core.player import CustomPlayer
 import logging
+from core import channels
 
 class Queue(commands.Cog):
     def __init__(self, bot: commands.Bot):
@@ -27,8 +28,7 @@ class Queue(commands.Cog):
             if is_loop:
                 status_parts.append("🔄 循環模式：開啟")
             paginator = QueuePaginator(interaction, queue_list, songs_per_page=10, current_song=current_song, status_parts=status_parts)
-            embed = paginator.get_embed()
-            await interaction.followup.send(embed=embed, view=paginator)
+            await interaction.followup.send(view=paginator)
         except Exception as e:
             logging.error(f"顯示播放清單時發生錯誤：{str(e)}")
             error_embed = create_error_embed(f"顯示播放清單時發生錯誤：{str(e)}")
@@ -131,6 +131,7 @@ class Queue(commands.Cog):
                 await interaction.followup.send(embed=error_embed)
                 return
             player._last_channel = interaction.channel
+            channels.remember(interaction.guild.id, interaction.channel.id)
             is_playlist = False
             if 'spotify.com' in query:
                 if 'playlist' in query or 'album' in query:

@@ -1,6 +1,7 @@
 import discord
 from discord.ext import commands
 import logging
+from core.view import HelpView
 
 
 class _PrefixResponse:
@@ -142,19 +143,8 @@ class PrefixCommands(commands.Cog):
 
     @commands.command(name="help", aliases=["h"])
     async def help(self, ctx: commands.Context):
-        lines = [
-            "`p!play <歌名/連結>` (`p!p`) 播放",
-            "`p!pause` 暫停　`p!resume` (`p!r`) 繼續",
-            "`p!skip` (`p!s`) 跳過　`p!stop` 停止並清空",
-            "`p!volume <0-150>` (`p!vol`) 音量",
-            "`p!loop` (`p!l`) 循環　`p!controller` (`p!np`) 控制器",
-            "`p!queue` (`p!q`) 播放清單　`p!shuffle` 隨機　`p!clear` 清空",
-            "`p!remove <位置>` (`p!rm`) 移除　`p!insert <歌名/連結>` (`p!i`) 插播",
-            "`p!leave` (`p!dc`) 離開語音　`p!ping` 延遲",
-        ]
-        embed = discord.Embed(title="📚 p! 指令", description="\n".join(lines), color=discord.Color.green())
-        embed.set_footer(text="也可以使用 /help 查看 slash 指令")
-        await ctx.send(embed=embed)
+        view = HelpView(ctx.author.id, "prefix")
+        view.message = await ctx.send(view=view)
 
     @commands.Cog.listener()
     async def on_command_error(self, ctx: commands.Context, error: commands.CommandError):

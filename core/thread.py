@@ -4,12 +4,13 @@ import logging
 from pathlib import Path
 import discord
 
-THREAD_NAME = "🎵 音樂播放中"
+THREAD_NAME = "🎵 音樂播放中-控制器通知"
 DELETE_DELAY = 60
 DATA_PATH = Path(__file__).resolve().parent.parent / "data" / "music_threads.json"
 
 _threads: dict[int, int] = {}
 _delete_tasks: dict[int, asyncio.Task] = {}
+_controllers: dict[int, tuple[int, int]] = {}
 
 
 def _load_records() -> dict[int, int]:
@@ -84,10 +85,42 @@ async def get_thread(guild: discord.Guild) -> discord.Thread | None:
     return thread
 
 
+def get_active_controller(guild_id: int) -> tuple[int, int] | None:
+    return _controllers.get(guild_id)
+
+
+def is_active_controller(guild_id: int, message_id: int) -> bool:
+    ref = _controllers.get(guild_id)
+    return ref is not None and ref[1] == message_id
+
+
+async def drop_thread(guild: discord.Guild):
+    cancel_delete(guild.id)
+    thread = await get_thread(guild)
+    _untrack(guild.id)
+    if thread and guild.me and thread.owner_id == guild.me.id:
+        try:
+            await _remove_thread(thread, guild.me)
+            logging.info(f"[Thread] Guild {guild.id}: 控制器已更換，已移除討論串 {thread.id}")
+        except discord.HTTPException as e:
+            logging.warning(f"[Thread] Guild {guild.id}: 移除舊討論串失敗：{e}")
+
+
+async def set_active_controller(guild: discord.Guild, message) -> tuple[int, int] | None:
+    old = _controllers.get(guild.id)
+    _controllers[guild.id] = (message.channel.id, message.id)
+    if old is not None and old[1] != message.id:
+        await drop_thread(guild)
+        return old
+    return None
+
+
 async def ensure_thread(message: discord.Message | None) -> discord.Thread | None:
     if message is None or message.guild is None or message.guild.me is None:
         return None
     guild = message.guild
+    if not is_active_controller(guild.id, message.id):
+        return None
     cancel_delete(guild.id)
     thread = await get_thread(guild)
     if thread:
@@ -106,24 +139,20 @@ async def ensure_thread(message: discord.Message | None) -> discord.Thread | Non
     _track(guild.id, thread.id)
     logging.info(f"[Thread] Guild {guild.id}: 已建立討論串 {thread.id}")
     try:
-        embed = discord.Embed(
-            description=f"## 停止播放 {DELETE_DELAY} 秒後會自動刪除討論串。\n-# 也可以按下方按鈕立即刪除此討論串。",
-            color=discord.Color.blurple()
-        )
-        await thread.send(embed=embed, view=ThreadDeleteView(), silent=True)
+        await thread.send(view=ThreadDeleteView(), silent=True)
     except discord.HTTPException as e:
         logging.warning(f"[Thread] Guild {guild.id}: 無法發送刪除按鈕：{e}")
     return thread
 
 
-async def send_notice(interaction: discord.Interaction, embed: discord.Embed | None = None, *, content: str | None = None, view: discord.ui.View | None = None):
+async def send_notice(interaction: discord.Interaction, embed: discord.Embed | None = None, *, content: str | None = None, view: discord.ui.BaseView | None = None):
     kwargs = {"silent": True}
     if embed is not None:
         kwargs["embed"] = embed
     if view is not None:
         kwargs["view"] = view
     thread = None
-    if interaction.guild:
+    if interaction.guild and getattr(interaction, "type", None) == discord.InteractionType.component:
         thread = await ensure_thread(getattr(interaction, "message", None))
     if thread:
         try:
@@ -213,10 +242,7 @@ async def remove_all_threads(client: discord.Client):
             _untrack(guild_id)
 
 
-class ThreadDeleteView(discord.ui.View):
-    def __init__(self):
-        super().__init__(timeout=None)
-
+class ThreadDeleteRow(discord.ui.ActionRow):
     @discord.ui.button(label="刪除此討論串", emoji="🗑️", style=discord.ButtonStyle.danger, custom_id="music_thread:delete")
     async def delete_thread(self, interaction: discord.Interaction, button: discord.ui.Button):
         thread = interaction.channel
@@ -247,3 +273,10 @@ class ThreadDeleteView(discord.ui.View):
                 await interaction.followup.send(f"❌ 刪除失敗：{e}", ephemeral=True)
             except discord.HTTPException:
                 pass
+
+
+class ThreadDeleteView(discord.ui.LayoutView):
+    def __init__(self):
+        super().__init__(timeout=None)
+        text = f"## 停止播放 {DELETE_DELAY} 秒後會自動刪除討論串。\n-# 也可以按下方按鈕立即刪除此討論串。"
+        self.add_item(discord.ui.Container(discord.ui.TextDisplay(text), ThreadDeleteRow(), accent_color=discord.Color.red()))

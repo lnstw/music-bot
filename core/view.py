@@ -12,7 +12,7 @@ from PIL import Image
 import colorsys
 from core.embed import create_error_embed, check_voice_state_and_respond, EMBED_COLORS
 from core.player import CustomPlayer
-from core.thread import send_notice, schedule_delete
+from core.thread import send_notice, schedule_delete, is_active_controller
 import logging
 
 
@@ -95,7 +95,7 @@ class MusicControlView(discord.ui.LayoutView):
             current_time = "0:00"
             total_time = "0:00"
 
-        if player.is_paused:
+        if player.paused:
             status_title = f"# ⏸️ 已暫停\n[{track.title}]({track.uri})"
             accent_color = discord.Color.yellow()
         else:   
@@ -122,12 +122,35 @@ class MusicControlView(discord.ui.LayoutView):
         container = discord.ui.Container(self.section, self.action_row1, self.action_row2, accent_color=accent_color)
         self.add_item(container)
 
+    async def _guard(self, interaction: discord.Interaction) -> bool:
+        await interaction.response.defer()
+        guild = interaction.guild
+        message = interaction.message
+        if guild is None or message is None or not is_active_controller(guild.id, message.id):
+            try:
+                await interaction.edit_original_response(view=SupersededView())
+            except discord.HTTPException:
+                pass
+            return False
+        return True
+
     async def _get_player(self, interaction: discord.Interaction) -> CustomPlayer | None:
-        player = interaction.guild.voice_client
-        if not isinstance(player, CustomPlayer) or not player.current:
-            await interaction.edit_original_response(view=playend())
+        player = None
+        for attempt in range(3):
+            player = interaction.guild.voice_client
+            if isinstance(player, CustomPlayer) and player.current:
+                return player
+            if attempt < 2:
+                await asyncio.sleep(1)
+        await interaction.edit_original_response(view=playend())
+        return None
+
+    async def _prepare(self, interaction: discord.Interaction, *, voice: bool = True) -> CustomPlayer | None:
+        if not await self._guard(interaction):
             return None
-        return player
+        if voice and not await check_voice_state_and_respond(interaction):
+            return None
+        return await self._get_player(interaction)
 
     async def _redraw(self, interaction: discord.Interaction, player: CustomPlayer):
         song = player.current if player else None
@@ -135,10 +158,7 @@ class MusicControlView(discord.ui.LayoutView):
         await interaction.edit_original_response(view=view)
 
     async def next_play(self, interaction: discord.Interaction):
-        await interaction.response.defer()
-        if not await check_voice_state_and_respond(interaction):
-            return
-        player = await self._get_player(interaction)
+        player = await self._prepare(interaction)
         if not player:
             return
         next_track = player.queue.peek_upcoming()
@@ -161,20 +181,17 @@ class MusicControlView(discord.ui.LayoutView):
         await send_notice(interaction, embed)
 
     async def play_pause(self, interaction: discord.Interaction):
-        await interaction.response.defer()
-        if not await check_voice_state_and_respond(interaction):
-            return
-        player = await self._get_player(interaction)
+        player = await self._prepare(interaction)
         if not player:
             return
-        if player.is_paused:
-            await player.set_pause(False)
+        if player.paused:
+            await player.apply_pause(False)
             embed = discord.Embed(
                 title="▶️ 已恢復播放",
                 color=EMBED_COLORS['success']
             )
         else:
-            await player.set_pause(True)
+            await player.apply_pause(True)
             embed = discord.Embed(
                 title="⏸️ 已暫停播放",
                 color=EMBED_COLORS['success']
@@ -183,10 +200,7 @@ class MusicControlView(discord.ui.LayoutView):
         await send_notice(interaction, embed)
 
     async def toggle_loop(self, interaction: discord.Interaction):
-        await interaction.response.defer()
-        if not await check_voice_state_and_respond(interaction):
-            return
-        player = await self._get_player(interaction)
+        player = await self._prepare(interaction)
         if not player:
             return
         status = "開啟" if player.toggle_loop() else "關閉"
@@ -200,7 +214,8 @@ class MusicControlView(discord.ui.LayoutView):
 
     async def show_queue(self, interaction: discord.Interaction):
         try:
-            await interaction.response.defer()
+            if not await self._guard(interaction):
+                return
             player: CustomPlayer = interaction.guild.voice_client
             if not player:
                 await send_notice(interaction, content="❌ 機器人不在語音頻道中！")
@@ -211,15 +226,15 @@ class MusicControlView(discord.ui.LayoutView):
             if player.queue.is_looping:
                 status_parts.append("🔄 循環模式：開啟")
             paginator = QueuePaginator(interaction, queue_list, songs_per_page=10, current_song=current_song, status_parts=status_parts)
-            embed = paginator.get_embed()
-            await send_notice(interaction, embed, content=interaction.user.mention, view=paginator)
+            await send_notice(interaction, view=paginator)
         except Exception as e:
             logging.error(f"顯示播放清單時發生錯誤：{str(e)}")
             error_embed = create_error_embed(f"顯示播放清單時發生錯誤：{str(e)}")
             await send_notice(interaction, error_embed)
 
     async def shuffle_queue(self, interaction: discord.Interaction):
-        await interaction.response.defer()
+        if not await self._guard(interaction):
+            return
         if not await check_voice_state_and_respond(interaction):
             return
         player: CustomPlayer = interaction.guild.voice_client
@@ -235,10 +250,7 @@ class MusicControlView(discord.ui.LayoutView):
         await send_notice(interaction, embed)
 
     async def Rewind(self, interaction: discord.Interaction):
-        await interaction.response.defer()
-        if not await check_voice_state_and_respond(interaction):
-            return
-        player = await self._get_player(interaction)
+        player = await self._prepare(interaction)
         if not player:
             return
         new_position = max(int(player.position) - 10000, 0)
@@ -251,10 +263,7 @@ class MusicControlView(discord.ui.LayoutView):
         await send_notice(interaction, embed)
 
     async def forward(self, interaction: discord.Interaction):
-        await interaction.response.defer()
-        if not await check_voice_state_and_respond(interaction):
-            return
-        player = await self._get_player(interaction)
+        player = await self._prepare(interaction)
         if not player:
             return
         song = player.current
@@ -268,10 +277,7 @@ class MusicControlView(discord.ui.LayoutView):
         await send_notice(interaction, embed)
 
     async def _change_volume(self, interaction: discord.Interaction, delta: int):
-        await interaction.response.defer()
-        if not await check_voice_state_and_respond(interaction):
-            return
-        player = await self._get_player(interaction)
+        player = await self._prepare(interaction)
         if not player:
             return
         new_volume = max(0, min(player.volume + delta, 150))
@@ -291,8 +297,7 @@ class MusicControlView(discord.ui.LayoutView):
         await self._change_volume(interaction, -5)
 
     async def update_status(self, interaction: discord.Interaction):
-        await interaction.response.defer()
-        player = await self._get_player(interaction)
+        player = await self._prepare(interaction, voice=False)
         if not player:
             return
         await self._redraw(interaction, player)
@@ -327,6 +332,30 @@ class playend(discord.ui.LayoutView):
         )
         self.add_item(container)
 
+class SupersededView(discord.ui.LayoutView):
+    def __init__(self):
+        super().__init__(timeout=None)
+        text_content = "# ⚠️ 此控制器已失效\n\n### 已有更新的控制器，請使用最下方的控制器。"
+        self.text_display = ui.TextDisplay(text_content)
+        container = ui.Container(
+            self.text_display,
+            accent_color=discord.Color.light_grey()
+        )
+        self.add_item(container)
+
+def expired_embed() -> discord.Embed:
+    return discord.Embed(
+        title="⚠️ 過期的物件",
+        description="此互動已過期或已失效，請重新使用指令取得。",
+        color=discord.Color.yellow(),
+    )
+
+class ExpiredView(discord.ui.LayoutView):
+    def __init__(self):
+        super().__init__(timeout=None)
+        self.text_display = ui.TextDisplay("# ⚠️ 過期的物件"+chr(10)+chr(10)+"### 此互動已過期或已失效，請重新使用指令取得。")
+        self.add_item(ui.Container(self.text_display, accent_color=discord.Color.yellow()))
+
 class timeout(discord.ui.LayoutView):
     def __init__(self):
         super().__init__(timeout=None)
@@ -338,165 +367,99 @@ class timeout(discord.ui.LayoutView):
         )
         self.add_item(container)
 
-from discord.ui import View, Button
+def _fmt_duration(length_ms) -> str:
+    sec = int(length_ms / 1000) if length_ms else 0
+    return f"{sec // 60}:{sec % 60:02d}"
 
-class QueuePaginator(View):
+class SimpleView(discord.ui.LayoutView):
+    def __init__(self, text: str, color: discord.Color = None):
+        super().__init__(timeout=None)
+        self.add_item(ui.Container(ui.TextDisplay(text), accent_color=color or EMBED_COLORS['info']))
+
+class PagedButton(discord.ui.Button):
+    def __init__(self, label: str, step: int):
+        super().__init__(label=label, style=discord.ButtonStyle.primary)
+        self.step = step
+    async def callback(self, interaction: discord.Interaction):
+        await self.view.turn(interaction, self.step)
+
+class QueuePaginator(discord.ui.LayoutView):
     def __init__(self, interaction, queue_list, songs_per_page=10, current_song=None, status_parts=None):
         super().__init__(timeout=60)
-        self.interaction: discord.Interaction = interaction
+        self.interaction = interaction
         self.queue_list: list[lava_lyra.Track] = queue_list
         self.current_song: lava_lyra.Track | None = current_song
         self.status_parts = status_parts or []
-        
         self.page = 0
         self.songs_per_page = songs_per_page
-        
-        # 預先計算好每一頁「真正能容納的歌曲範圍」，徹底解決因字數截斷導致的跳行 Bug
         self.page_ranges = self._calculate_pages()
         self.total_pages = len(self.page_ranges) or 1
+        self._render()
 
-        self.prev_button = Button(label="上一頁", style=discord.ButtonStyle.primary)
-        self.next_button = Button(label="下一頁", style=discord.ButtonStyle.primary)
-        self.prev_button.callback = self.prev_page
-        self.next_button.callback = self.next_page
-        self.add_item(self.prev_button)
-        self.add_item(self.next_button)
-        self.update_buttons()
+    def _line(self, idx: int) -> str:
+        song = self.queue_list[idx]
+        title = song.title[:50] + "..." if len(song.title) > 50 else song.title
+        return f"`{idx+1}.` [{title}]({song.uri}) | `{_fmt_duration(song.length)}`\n"
 
     def _calculate_pages(self) -> list[tuple[int, int]]:
-        """動態計算分頁範圍，確保每一頁的 Embed Field 絕對不會超過 1024 字元"""
         pages = []
         start_idx = 0
         total_songs = len(self.queue_list)
-        
         while start_idx < total_songs:
             current_length = 0
             end_idx = start_idx
             while end_idx < total_songs and (end_idx - start_idx) < self.songs_per_page:
-                song = self.queue_list[end_idx]
-                duration_sec = int(song.length / 1000) if song.length else 0
-                duration = f"{duration_sec//60}:{duration_sec%60:02d}"
-                title = song.title[:50] + "..." if len(song.title) > 50 else song.title
-                line = f"`{end_idx+1}.` [{title}]({song.uri}) | `{duration}`\n"
+                line = self._line(end_idx)
                 if current_length + len(line) > 950:
-                    break                  
+                    break
                 current_length += len(line)
                 end_idx += 1
             if end_idx == start_idx:
                 end_idx += 1
-                
             pages.append((start_idx, end_idx))
             start_idx = end_idx
-            
         return pages
 
-    def update_buttons(self):
-        self.prev_button.disabled = self.page == 0
-        self.next_button.disabled = self.page >= self.total_pages - 1
-
-    def get_embed(self):
-        embed = discord.Embed(
-            title=f"📃 播放清單 (第 {self.page+1}/{self.total_pages} 頁)",
-            color=EMBED_COLORS['info']
-        )
+    def _text(self) -> str:
+        parts = [f"# 📃 播放清單 (第 {self.page+1}/{self.total_pages} 頁)"]
         if self.status_parts:
-            embed.description = " | ".join(self.status_parts)
-            
+            parts.append(" | ".join(self.status_parts))
         if self.current_song:
-            duration_sec = int(self.current_song.length / 1000) if self.current_song.length else 0
-            duration = f"{duration_sec//60}:{duration_sec%60:02d}"
-            current_song_requester = self.current_song.requester.mention if self.current_song.requester else "未知用戶"
-            current_text = f"[{self.current_song.title}]({self.current_song.uri})\n`{duration}` | {current_song_requester}"
-            embed.add_field(name="🎵 正在播放", value=current_text, inline=False)
-            
+            requester = self.current_song.requester.mention if self.current_song.requester else "未知用戶"
+            parts.append(f"### 🎵 正在播放\n[{self.current_song.title}]({self.current_song.uri})\n`{_fmt_duration(self.current_song.length)}` | {requester}")
         description = ""
-        display_start = 0
-        display_end = 0
-        
+        display_start = display_end = 0
         if self.page_ranges and self.page < len(self.page_ranges):
             start_idx, end_idx = self.page_ranges[self.page]
-            display_start = start_idx + 1
-            display_end = end_idx
-            
-            for idx in range(start_idx, end_idx):
-                song = self.queue_list[idx]
-                duration_sec = int(song.length / 1000) if song.length else 0
-                duration = f"{duration_sec//60}:{duration_sec%60:02d}"
-                
-                title = song.title[:50] + "..." if len(song.title) > 50 else song.title
-                line = f"`{idx+1}.` [{title}]({song.uri}) | `{duration}`\n"
-                description += line
-
+            display_start, display_end = start_idx + 1, end_idx
+            description = "".join(self._line(i) for i in range(start_idx, end_idx))
             if (end_idx - start_idx) < self.songs_per_page and end_idx < len(self.queue_list):
                 description += "-# 翻頁後還有更多歌曲..."
-        
         if not description:
             description = "播放清單是空的"
-            
-        embed.add_field(
-            name=f"📋 待播清單 ({display_start}-{display_end}/{len(self.queue_list)})",
-            value=description,
-            inline=False
-        )
-        total_duration_ms = sum(s.length for s in self.queue_list)
-        total_duration = int(total_duration_ms / 1000)  
-        hours = total_duration // 3600
-        minutes = (total_duration % 3600) // 60
-        seconds = total_duration % 60
-        
-        if len(self.queue_list) > 0:
-            if hours > 0:
-                embed.set_footer(text=f"總時長: {hours}:{minutes:02d}:{seconds:02d}")
-            else:
-                embed.set_footer(text=f"總時長: {minutes:02d}:{seconds:02d}")
-        return embed
+        parts.append(f"### 📋 待播清單 ({display_start}-{display_end}/{len(self.queue_list)})\n{description}")
+        if self.queue_list:
+            total = int(sum(s.length for s in self.queue_list) / 1000)
+            h, m, s = total // 3600, (total % 3600) // 60, total % 60
+            parts.append(f"-# 總時長: {h}:{m:02d}:{s:02d}" if h > 0 else f"-# 總時長: {m:02d}:{s:02d}")
+        return "\n\n".join(parts)
 
-    async def prev_page(self, interaction: discord.Interaction):
-        if self.page > 0:
-            self.page -= 1
-            self.update_buttons()
-            await interaction.response.edit_message(embed=self.get_embed(), view=self)
+    def _render(self):
+        self.clear_items()
+        prev_button = PagedButton("上一頁", -1)
+        next_button = PagedButton("下一頁", 1)
+        prev_button.disabled = self.page == 0
+        next_button.disabled = self.page >= self.total_pages - 1
+        self.add_item(ui.Container(ui.TextDisplay(self._text()), ui.ActionRow(prev_button, next_button), accent_color=EMBED_COLORS['info']))
 
-    async def next_page(self, interaction: discord.Interaction):
-        if self.page < self.total_pages - 1:
-            self.page += 1
-            self.update_buttons()
-            await interaction.response.edit_message(embed=self.get_embed(), view=self)
-
-class opselect_view(discord.ui.View):
-    def __init__(self, bot: commands.Bot):
-        super().__init__(timeout=None)
-        self.add_item(OpSelect(bot=bot))
-
-class LavalinkStatusView(discord.ui.View):
-    def __init__(self, embeds: list[discord.Embed]):
-        super().__init__(timeout=60)
-        self.embeds = embeds
-        self.current_page = 0
-        self.update_buttons()
-
-    def update_buttons(self):
-        self.previous.disabled = self.current_page == 0
-        self.next.disabled = self.current_page >= len(self.embeds) - 1
-
-    @discord.ui.button(label="⬅️ 上一頁", style=discord.ButtonStyle.secondary)
-    async def previous(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if self.current_page > 0:
-            self.current_page -= 1
-            self.update_buttons()
-            await interaction.response.edit_message(embed=self.format_embed(), view=self)
-
-    @discord.ui.button(label="➡️ 下一頁", style=discord.ButtonStyle.secondary)
-    async def next(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if self.current_page < len(self.embeds) - 1:
-            self.current_page += 1
-            self.update_buttons()
-            await interaction.response.edit_message(embed=self.format_embed(), view=self)
-
-    def format_embed(self):
-        embed = self.embeds[self.current_page]
-        embed.set_footer(text=f"第 {self.current_page + 1} / {len(self.embeds)} 頁｜總計 {len(self.embeds)} 個伺服器正在播放")
-        return embed
+    async def turn(self, interaction: discord.Interaction, step: int):
+        new_page = self.page + step
+        if 0 <= new_page < self.total_pages:
+            self.page = new_page
+            self._render()
+            await interaction.response.edit_message(view=self)
+        else:
+            await interaction.response.defer()
 
 class OpSelect(discord.ui.Select):
     def __init__(self, bot: commands.Bot, custom_options: list = None, placeholder: str = "選擇功能"):
@@ -506,10 +469,10 @@ class OpSelect(discord.ui.Select):
                 discord.SelectOption(label="更新機器人狀態", value="更新機器人狀態"),
             ]
         super().__init__(
-            placeholder=placeholder, 
-            min_values=1, 
-            max_values=1, 
-            options=custom_options, 
+            placeholder=placeholder,
+            min_values=1,
+            max_values=1,
+            options=custom_options,
             custom_id="persistent_view:op_select"
         )
         self.bot = bot
@@ -520,81 +483,98 @@ class OpSelect(discord.ui.Select):
             return
         op_select = self.values[0]
         if op_select == "Lavalink 播放狀態":
-            embeds = []
+            pages = []
             for guild in self.bot.guilds:
                 if guild.voice_client and isinstance(guild.voice_client, CustomPlayer) and guild.voice_client.is_playing:
                     player: CustomPlayer = guild.voice_client
                     current_song = player.current
-                    queue_length = len(player.queue.upcoming())
-                    status_parts = []
-                    if player.queue.is_looping:
-                        status_parts.append("🔄循環")
-                    voice_channel = guild.voice_client.channel
+                    voice_channel = player.channel
                     member_count = len([m for m in voice_channel.members if not m.bot])
-
-                    embed = discord.Embed(
-                        title="🎵 Lavalink 播放狀態",
-                        description=f"📡 {guild.name}",
-                        color=EMBED_COLORS['info']
+                    status = "🔄循環" if player.queue.is_looping else "➡️ 一般播放"
+                    pages.append(
+                        f"# 🎵 Lavalink 播放狀態\n📡 {guild.name}\n\n"
+                        f"**🎵 播放中**\n{current_song.title if current_song else '未知'}\n\n"
+                        f"**👥 頻道**: {voice_channel.name} ({member_count}人在線)\n"
+                        f"**📋 佇列**: {len(player.queue.upcoming())} 首\n"
+                        f"**⚙️ 狀態**: {status}"
                     )
-                    embed.add_field(name="🎵 播放中", value=current_song.title if current_song else "未知", inline=False)
-                    embed.add_field(name="👥 頻道", value=f"{voice_channel.name} ({member_count}人在線)", inline=True)
-                    embed.add_field(name="📋 佇列", value=f"{queue_length} 首", inline=True)
-                    embed.add_field(name="⚙️ 狀態", value=' | '.join(status_parts) if status_parts else '➡️ 一般播放', inline=False)
-                    embeds.append(embed)
-
-            if not embeds:
-                embed = discord.Embed(
-                    title="🎵 Lavalink 播放狀態",
-                    description="目前沒有伺服器正在播放音樂",
-                    color=EMBED_COLORS['info']
-                )
-                await interaction.response.send_message(embed=embed, ephemeral=True)
+            if not pages:
+                await interaction.response.send_message(view=SimpleView("# 🎵 Lavalink 播放狀態\n目前沒有伺服器正在播放音樂"), ephemeral=True)
             else:
-                view = LavalinkStatusView(embeds)
-                await interaction.response.send_message(embed=view.format_embed(), view=view, ephemeral=True)
+                await interaction.response.send_message(view=LavalinkStatusView(pages), ephemeral=True)
         if op_select == "更新機器人狀態":
             await self.bot.auto_update_status()
-            await interaction.response.send_message("✅ 已更新音樂機器人狀態顯示", ephemeral=True)
+            await interaction.response.send_message(view=SimpleView("✅ 已更新音樂機器人狀態顯示", EMBED_COLORS['success']), ephemeral=True)
 
-class RefreshButton(discord.ui.View):
-    def __init__(self, image_url: str = None):
+class opselect_view(discord.ui.LayoutView):
+    def __init__(self, bot: commands.Bot):
         super().__init__(timeout=None)
-        if image_url:
-            self.add_item(discord.ui.Button(label="點我跳轉", url=image_url, style=discord.ButtonStyle.link))
+        self.add_item(ui.Container(ui.TextDisplay("請選擇功能"), ui.ActionRow(OpSelect(bot=bot)), accent_color=EMBED_COLORS['info']))
 
+class LavalinkStatusView(discord.ui.LayoutView):
+    def __init__(self, pages: list[str]):
+        super().__init__(timeout=60)
+        self.pages = pages
+        self.current_page = 0
+        self._render()
+
+    def _render(self):
+        self.clear_items()
+        prev_button = PagedButton("⬅️ 上一頁", -1)
+        next_button = PagedButton("➡️ 下一頁", 1)
+        prev_button.disabled = self.current_page == 0
+        next_button.disabled = self.current_page >= len(self.pages) - 1
+        footer = f"-# 第 {self.current_page + 1} / {len(self.pages)} 頁｜總計 {len(self.pages)} 個伺服器正在播放"
+        self.add_item(ui.Container(ui.TextDisplay(f"{self.pages[self.current_page]}\n\n{footer}"), ui.ActionRow(prev_button, next_button), accent_color=EMBED_COLORS['info']))
+
+    async def turn(self, interaction: discord.Interaction, step: int):
+        new_page = self.current_page + step
+        if 0 <= new_page < len(self.pages):
+            self.current_page = new_page
+            self._render()
+            await interaction.response.edit_message(view=self)
+        else:
+            await interaction.response.defer()
+
+class RefreshActionRow(ui.ActionRow):
     @discord.ui.button(label="重新取得", style=discord.ButtonStyle.primary, custom_id="refresh_button")
     async def refresh(self, interaction: discord.Interaction, button: discord.ui.Button):
-        ref_embed = discord.Embed(title="<a:loading:1429472831103832195> 重新取得中...", color=discord.Color.yellow())
-        await interaction.response.edit_message(embed=ref_embed, view=None)
-
+        await interaction.response.edit_message(view=SimpleView("<a:loading:1429472831103832195> 重新取得中...", discord.Color.yellow()))
         start_time = datetime.datetime.now()
         async with aiohttp.ClientSession() as session:
             async with session.get("https://api.redbean0721.com/api/img?type=json") as api_response:
                 end_time = datetime.datetime.now()
                 if api_response.status != 200:
-                    await interaction.edit_original_response(content="無法獲取圖片，請稍後再試。")
+                    await interaction.edit_original_response(view=SimpleView("無法獲取圖片，請稍後再試。", EMBED_COLORS['error']))
                     return
                 data = await api_response.json()
                 image_url = data.get("url")
                 tag = data.get("tag")
                 color_task = asyncio.create_task(get_dominant_color(image_url))
-                image_task = asyncio.create_task(session.get(image_url))
-                image_response = await image_task
+                image_response = await session.get(image_url)
                 image_bytes = await image_response.read()
                 embed_color = await color_task
                 elapsed = (end_time - start_time).total_seconds()
-                embed = discord.Embed(
-                    title="隨機圖",
-                    color=embed_color,
-                    description=f"提示詞: {tag}",
-                )
                 file = discord.File(BytesIO(image_bytes), filename="image.jpg")
-                embed.set_image(url="attachment://image.jpg")
-                embed.set_footer(text=f"回應時間: {elapsed:.2f}s")
-                embed.timestamp = datetime.datetime.now()
-                view = RefreshButton(image_url=image_url)
-                await interaction.edit_original_response(embed=embed, view=view, attachments=[file])
+                view = RefreshButton(image_url=image_url, tag=tag, elapsed=elapsed, color=embed_color)
+                await interaction.edit_original_response(view=view, attachments=[file])
+
+class RefreshButton(discord.ui.LayoutView):
+    def __init__(self, image_url: str = None, tag: str = None, elapsed: float = None, color: discord.Color = None):
+        super().__init__(timeout=None)
+        items = []
+        if image_url:
+            items.append(ui.TextDisplay(f"## 隨機圖\n提示詞: {tag}"))
+            items.append(ui.MediaGallery(discord.MediaGalleryItem("attachment://image.jpg")))
+            if elapsed is not None:
+                items.append(ui.TextDisplay(f"-# 回應時間: {elapsed:.2f}s"))
+        else:
+            items.append(ui.TextDisplay("## 隨機圖"))
+        row = RefreshActionRow()
+        if image_url:
+            row.add_item(discord.ui.Button(label="點我跳轉", url=image_url, style=discord.ButtonStyle.link))
+        items.append(row)
+        self.add_item(ui.Container(*items, accent_color=color or EMBED_COLORS['info']))
 
 async def get_dominant_color(url):
     def sync_get_color():
@@ -725,6 +705,25 @@ HELP_CATEGORIES = {
     }
 }
 
+PREFIX_USAGE = {
+    "音樂 播放": "`p!play <歌名/連結>`（別名 `p!p`）",
+    "音樂 暫停": "`p!pause`",
+    "音樂 繼續": "`p!resume`（別名 `p!r`）",
+    "音樂 跳過": "`p!skip`（別名 `p!s`、`p!next`）",
+    "音樂 音量": "`p!volume <0-150>`（別名 `p!vol`、`p!v`）",
+    "音樂 控制器": "`p!controller`（別名 `p!np`、`p!c`）",
+    "音樂 循環": "`p!loop`（別名 `p!l`）",
+    "播放清單 顯示": "`p!queue`（別名 `p!q`）",
+    "播放清單 清空": "`p!clear`",
+    "播放清單 移除": "`p!remove <位置>`（別名 `p!rm`）",
+    "播放清單 隨機": "`p!shuffle`（別名 `p!sh`）",
+    "播放清單 插入": "`p!insert <歌名/連結>`（別名 `p!i`、`p!pn`）",
+    "機器人 離開": "`p!leave`（別名 `p!dc`）",
+    "ping": "`p!ping`",
+    "停止": "`p!stop`",
+}
+
+
 def build_command_id_lookup(commands) -> dict:
     lookup = {}
 
@@ -754,150 +753,113 @@ def build_command_id_lookup(commands) -> dict:
     return lookup
 
 
-class CategorySelect(discord.ui.Select):
-    def __init__(self):
-        options = [
-            discord.SelectOption(label="🎵 音樂播放", description="查看基本播放命令", value="music"),
-            discord.SelectOption(label="🧾 播放清單控制", description="管理播放清單", value="queue"),
-            discord.SelectOption(label="🤖 機器人控制", description="讓機器人離開語音頻道", value="bot"),
-            discord.SelectOption(label="🤖 其他", description="其他功能", value="other")
-        ]
-        super().__init__(placeholder="選擇一個分類...", options=options, custom_id="category_select")
+class HelpView(discord.ui.LayoutView):
+    def __init__(self, author_id: int, mode: str = "slash"):
+        super().__init__(timeout=300)
+        self.author_id = author_id
+        self.mode = mode
+        self.category: str | None = None
+        self.command: str | None = None
+        self.command_ids: dict | None = None
+        self.message = None
+        self._render()
 
-    async def callback(self, interaction: discord.Interaction):
-        try:
-            commands = await interaction.client.tree.fetch_commands()
-        except Exception:
-            commands = []
+    def _label(self, path: str) -> str:
+        if self.mode == "prefix":
+            return PREFIX_USAGE[path].split("`")[1]
+        return f"/{path}"
 
-        command_ids = build_command_id_lookup(commands)
-        category = self.values[0]
-        category_data = HELP_CATEGORIES.get(category)
-        if not category_data:
-            await interaction.response.send_message("找不到該分類。", ephemeral=True)
-            return
+    def _commands(self) -> list[dict]:
+        commands_info = HELP_CATEGORIES[self.category]["commands"]
+        if self.mode == "prefix":
+            return [c for c in commands_info if c["path"] in PREFIX_USAGE]
+        return commands_info
 
-        view = CommandSelectView(category_data["commands"], command_ids, category_data["title"])
-        embed = discord.Embed(
-            title=category_data["title"],
-            description="請從下方選單選擇一個命令以查看詳細資訊",
-            color=discord.Color.blue(),
-        )
-        await interaction.response.edit_message(embed=embed, view=view)
-
-
-class CategorySelectView(discord.ui.View):
-    def __init__(self):
-        super().__init__(timeout=None)
-        self.add_item(CategorySelect())
-
-
-class CommandSelect(discord.ui.Select):
-    def __init__(self, commands_info: list[dict], command_ids: dict, category_title: str):
-        if isinstance(commands_info, dict):
-            normalized_commands = []
-            for command_path, command_value in commands_info.items():
-                if isinstance(command_value, dict):
-                    normalized_commands.append(
-                        {
-                            "path": command_path,
-                            "description": command_value.get("description", ""),
-                            "usage": command_value.get("usage", command_value.get("description", "")),
-                        }
-                    )
-                else:
-                    normalized_commands.append(
-                        {
-                            "path": command_path,
-                            "description": str(command_value),
-                            "usage": str(command_value),
-                        }
-                    )
-            commands_info = normalized_commands
-
-        self.commands_info = commands_info
-        self.command_ids = command_ids or {}
-        self.category_title = category_title
-        options = [
-            discord.SelectOption(
-                label=command_info["path"][:100],
-                description=command_info["description"][:100],
-                value=command_info["path"],
+    def _render(self):
+        self.clear_items()
+        other = "slash" if self.mode == "prefix" else "p!"
+        if self.category is None:
+            title = "# 📚 p! 指令" if self.mode == "prefix" else "# 📚 命令幫助"
+            text = f"{title}\n請從下方選單選擇一個分類以查看相關命令\n-# 也可以使用 {'/help' if self.mode == 'prefix' else 'p!help'} 查看 {other} 指令"
+            select = discord.ui.Select(
+                placeholder="選擇一個分類...",
+                options=[discord.SelectOption(label=data["title"], value=key) for key, data in HELP_CATEGORIES.items()],
             )
-            for command_info in commands_info
-        ]
-        super().__init__(placeholder="選擇一個命令...", options=options, custom_id="command_select")
+            select.callback = self._on_category
+            items = [discord.ui.TextDisplay(text), discord.ui.ActionRow(select)]
+            color = discord.Color.green()
+        elif self.command is None:
+            data = HELP_CATEGORIES[self.category]
+            select = discord.ui.Select(
+                placeholder="選擇一個命令...",
+                options=[
+                    discord.SelectOption(label=self._label(c["path"])[:100], description=c["description"][:100], value=c["path"])
+                    for c in self._commands()
+                ],
+            )
+            select.callback = self._on_command
+            back = discord.ui.Button(label="返回分類選擇", emoji="◀️", style=discord.ButtonStyle.gray)
+            back.callback = self._on_home
+            items = [
+                discord.ui.TextDisplay(f"# {data['title']}\n請從下方選單選擇一個命令以查看詳細資訊"),
+                discord.ui.ActionRow(select),
+                discord.ui.ActionRow(back),
+            ]
+            color = discord.Color.blue()
+        else:
+            info = next(c for c in HELP_CATEGORIES[self.category]["commands"] if c["path"] == self.command)
+            if self.mode == "prefix":
+                body = f"# {self._label(self.command)}\n**說明:**\n{info['description']}\n\n**用法:** {PREFIX_USAGE[self.command]}\n**Slash 指令:** `/{self.command}`"
+            else:
+                cmd_id = (self.command_ids or {}).get(self.command)
+                title = f"</{self.command}:{cmd_id}>" if cmd_id else f"/{self.command}"
+                body = f"# {title}\n**說明:**\n{info['description']}\n\n**{info['usage']}**"
+                if self.command in PREFIX_USAGE:
+                    body += f"\n\n**前綴指令:** {PREFIX_USAGE[self.command]}"
+            back_category = discord.ui.Button(label=f"返回 {HELP_CATEGORIES[self.category]['title']}", emoji="◀️", style=discord.ButtonStyle.primary)
+            back_category.callback = self._on_back_category
+            back_home = discord.ui.Button(label="回到最前面", emoji="🏠", style=discord.ButtonStyle.gray)
+            back_home.callback = self._on_home
+            items = [discord.ui.TextDisplay(body), discord.ui.ActionRow(back_category, back_home)]
+            color = discord.Color.green()
+        self.add_item(discord.ui.Container(*items, accent_color=color))
 
-    async def callback(self, interaction: discord.Interaction):
-        cmd_path = self.values[0]
-        command_info = next((item for item in self.commands_info if item["path"] == cmd_path), None)
-        if not command_info:
-            command_info = next((item for category in HELP_CATEGORIES.values() for item in category["commands"] if item["path"] == cmd_path), None)
-        if not self.command_ids:
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.author_id:
+            await interaction.response.send_message("❌ 這是別人叫出的說明，請自己使用 `/help` 或 `p!help`", ephemeral=True)
+            return False
+        return True
+
+    async def _on_category(self, interaction: discord.Interaction):
+        self.category = interaction.data["values"][0]
+        self.command = None
+        self._render()
+        await interaction.response.edit_message(view=self)
+
+    async def _on_command(self, interaction: discord.Interaction):
+        self.command = interaction.data["values"][0]
+        if self.mode == "slash" and self.command_ids is None:
             try:
                 self.command_ids = build_command_id_lookup(await interaction.client.tree.fetch_commands())
             except Exception:
+                self.command_ids = {}
+        self._render()
+        await interaction.response.edit_message(view=self)
+
+    async def _on_back_category(self, interaction: discord.Interaction):
+        self.command = None
+        self._render()
+        await interaction.response.edit_message(view=self)
+
+    async def _on_home(self, interaction: discord.Interaction):
+        self.category = None
+        self.command = None
+        self._render()
+        await interaction.response.edit_message(view=self)
+
+    async def on_timeout(self):
+        if self.message:
+            try:
+                await self.message.edit(view=ExpiredView())
+            except discord.HTTPException:
                 pass
-        if not command_info:
-            await interaction.response.send_message("找不到該命令。", ephemeral=True)
-            return
-
-        cmd_id = self.command_ids.get(cmd_path)
-        desc = command_info["description"]
-        usage = command_info["usage"]
-        title = f"</{cmd_path}:{cmd_id}>" if cmd_id else f"/{cmd_path}"
-
-        embed = discord.Embed(
-            title=title,
-            description=f"**說明:**\n{desc}\n\n**{usage}**",
-            color=discord.Color.green(),
-        )
-        view = CommandDetailView()
-        await interaction.response.edit_message(embed=embed, view=view)
-
-
-class CommandSelectView(discord.ui.View):
-    def __init__(self, commands_info, command_ids, category_title: str):
-        super().__init__(timeout=None)
-        commands_info = commands_info or []
-        command_ids = command_ids or {}
-        self.add_item(CommandSelect(commands_info, command_ids, category_title))
-        back_button = discord.ui.Button(
-            label="返回分類選擇",
-            style=discord.ButtonStyle.gray,
-            emoji="◀️",
-            custom_id="cmd_back_to_category",
-        )
-        back_button.callback = self.back_callback
-        self.add_item(back_button)
-
-    async def back_callback(self, interaction: discord.Interaction):
-        view = CategorySelectView()
-        embed = discord.Embed(
-            title="📚 命令幫助",
-            description="請從下方選單選擇一個分類以查看相關命令",
-            color=discord.Color.blue(),
-        )
-        await interaction.response.edit_message(embed=embed, view=view)
-
-
-class CommandDetailView(discord.ui.View):
-    def __init__(self):
-        super().__init__(timeout=None)
-        back_button = discord.ui.Button(
-            label="重新選擇",
-            style=discord.ButtonStyle.primary,
-            emoji="🔄",
-            custom_id="cmd_detail_back",
-        )
-        back_button.callback = self.back_callback
-        self.add_item(back_button)
-
-    async def back_callback(self, interaction: discord.Interaction):
-        view = CategorySelectView()
-        embed = discord.Embed(
-            title="📚 命令幫助",
-            description="請從下方選單選擇一個分類以查看相關命令",
-            color=discord.Color.blue(),
-        )
-        await interaction.response.edit_message(embed=embed, view=view)

@@ -3,7 +3,6 @@ import random
 import lava_lyra
 import discord
 
-# Set CustomQueue
 class CustomQueue(lava_lyra.Queue):
     def __init__(self, max_size = None, max_history = 100, *, overflow = True):
         super().__init__(max_size, overflow=overflow)
@@ -39,7 +38,6 @@ class CustomQueue(lava_lyra.Queue):
         self._loop_mode = None
 
     def upcoming(self) -> list[lava_lyra.Track]:
-        """依實際播放順序回傳待播歌曲（不含正在播放的歌曲）"""
         if self._loop_mode == lava_lyra.LoopMode.QUEUE:
             index = self._current_index()
             if index >= 0:
@@ -55,7 +53,6 @@ class CustomQueue(lava_lyra.Queue):
         return None
 
     def shuffle_upcoming(self) -> None:
-        """打亂待播歌曲；循環模式下把目前歌曲放到最前面，其餘打亂接在後面"""
         if self._loop_mode == lava_lyra.LoopMode.QUEUE and self._current_index() >= 0:
             rest = self.upcoming()
             random.shuffle(rest)
@@ -70,7 +67,6 @@ class CustomQueue(lava_lyra.Queue):
             self._queue.clear()
 
     def remove_upcoming(self, position: int) -> lava_lyra.Track:
-        """移除待播清單中第 position 首（1 起算），回傳被移除的歌曲"""
         track = self.upcoming()[position - 1]
         for i, t in enumerate(self._queue):
             if t is track:
@@ -79,7 +75,6 @@ class CustomQueue(lava_lyra.Queue):
         return track
 
     def insert_next(self, track: lava_lyra.Track, offset: int = 0) -> None:
-        """插入到下一首（offset 為已插入的數量，用來保持多首插播的順序）"""
         if self._loop_mode == lava_lyra.LoopMode.QUEUE:
             index = self._current_index()
             if index >= 0:
@@ -87,7 +82,6 @@ class CustomQueue(lava_lyra.Queue):
                 return
         self.put_at_index(offset, track)
 
-# Set CustomPlayer
 class CustomPlayer(lava_lyra.Player):
     def __init__(self, client, channel, *, node = None):
         super().__init__(client, channel, node=node)
@@ -96,6 +90,27 @@ class CustomPlayer(lava_lyra.Player):
         self._last_channel: discord.TextChannel | discord.VoiceChannel | discord.StageChannel = None
         self._volume_initialized = False
         self._advance_lock = asyncio.Lock()
+
+    @property
+    def has_track(self) -> bool:
+        return self.current is not None
+
+    @property
+    def paused(self) -> bool:
+        return bool(self._paused)
+
+    async def apply_pause(self, pause: bool) -> bool:
+        changed = self.paused != pause
+        await self.set_pause(pause)
+        return changed
+
+    async def resync_pause(self):
+        if self.current is None:
+            return
+        try:
+            await self.set_pause(self.paused)
+        except Exception:
+            pass
 
     async def initialize_volume(self):
         if not self._volume_initialized:
@@ -107,7 +122,6 @@ class CustomPlayer(lava_lyra.Player):
             return await self._play_next()
 
     async def play_if_idle(self) -> lava_lyra.Track | None:
-        """只有在目前沒有歌曲時才開始播放（給 /播放、播放清單用）"""
         async with self._advance_lock:
             if self.current is not None:
                 return None
@@ -147,7 +161,6 @@ class CustomPlayer(lava_lyra.Player):
             return track
 
     def toggle_loop(self) -> bool:
-        """切換佇列循環，回傳切換後是否為開啟"""
         if self.queue.loop_mode:
             self.queue.disable_loop()
             return False

@@ -47,14 +47,12 @@ async def send_playlist_results(interaction: discord.Interaction, added_tracklis
 
         guild_id = interaction.guild_id
         vc: CustomPlayer = interaction.guild.voice_client
-        track = vc.current
-        if track and vc and vc.is_playing:
-            view = MusicControlView(track, vc)
-            message = await interaction.followup.send(view=view, silent=True)
-            from core.embed import start_auto_update
-            await start_auto_update(interaction.guild_id, vc, message)
+        track = vc.current if vc else None
+        if track:
+            from core.controller import send_controller
+            await send_controller(interaction, vc)
         else:
-            logging.error(f"[send_playlist_results] 無法取得目前歌曲或未在播放 (song={track}, vc.playing={vc.is_playing if vc else False})")
+            logging.error(f"[send_playlist_results] 無法取得目前歌曲或未在播放 (song={track})")
     if failed_tracklist:
         failed_per_page = 10
         total_failed = len(failed_tracklist)
@@ -121,11 +119,11 @@ async def process_playlist(
                         
                     added_songs.append(track)
                     
-                    if not first_song_added and not player.is_playing:
+                    if not first_song_added and not player.has_track:
                         if player:
                             await player.initialize_volume()
-                        if player.is_paused:
-                            await player.set_pause(False)
+                        if player.paused:
+                            await player.apply_pause(False)
                         await player.play_if_idle()
                         first_song_added = True
                 else:
