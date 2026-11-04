@@ -145,7 +145,7 @@ async def ensure_thread(message: discord.Message | None) -> discord.Thread | Non
     return thread
 
 
-async def send_notice(interaction: discord.Interaction, embed: discord.Embed | None = None, *, content: str | None = None, view: discord.ui.BaseView | None = None):
+async def send_notice(interaction: discord.Interaction, embed: discord.Embed | None = None, *, content: str | None = None, view: discord.ui.View | discord.ui.LayoutView | None = None):
     kwargs = {"silent": True}
     if embed is not None:
         kwargs["embed"] = embed
