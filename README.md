@@ -1,4 +1,4 @@
-# 🌙 夜間部的音樂機器人 / Night Owl Music Bot 🎵
+# 🌙 夜間部的音樂機器人🎵
 
 
 > 本專案由littlecommandcat協助LavaLyra的版本貢獻。
